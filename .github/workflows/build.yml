@@ -1,5 +1,9 @@
-name: 🏗️ Build GodKeyLogger
-on: [push]
+name: 🏗️ Build Angel Smart Michael
+
+on: 
+  push:
+    paths: ['AngelSmartMichael.cpp']  # Only build when source changes
+  pull_request:
 
 jobs:
   build:
@@ -8,15 +12,21 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    - name: Setup Visual Studio
+    - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
       
-    - name: Build
+    - name: Compile Angel Smart Michael
       shell: cmd
       run: |
-        cl /EHsc /O2 GodKeyLogger.cpp /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib gdiplus.lib
+        cl /EHsc /O2 /MT AngelSmartMichael.cpp /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib gdiplus.lib shell32.lib comctl32.lib
         
-    - uses: actions/upload-artifact@v4
+    - name: Verify Build
+      shell: cmd
+      run: dir GodKeyLogger.exe
+      
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
       with:
-        name: GodKeyLogger
+        name: 👼 AngelSmartMichael-v5.0
         path: GodKeyLogger.exe
+        retention-days: 30
