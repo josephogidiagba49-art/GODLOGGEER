@@ -15,81 +15,93 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Setup MSVC
-      uses: microsoft/setup-msbuild@v1
+    - name: Setup MSBuild
+      uses: microsoft/setup-msbuild@v1.3
     
     - name: Build executable
       run: |
-        echo "Building Power Angel v8.0..."
-        echo "=========================================="
+        Write-Host "Building Power Angel v8.0..." -ForegroundColor Green
+        Write-Host "==========================================" -ForegroundColor Cyan
         
-        # Create a simple batch file to set up environment and compile
-        @echo off
-        setlocal enabledelayedexpansion
+        # Create a proper batch script
+        $batchContent = @'
+@echo off
+setlocal enabledelayedexpansion
+
+echo [INFO] Setting up MSVC environment...
+
+:: Check for vswhere
+where vswhere >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] vswhere not found
+    exit /b 1
+)
+
+:: Get Visual Studio path
+for /f "usebackq tokens=*" %%i in (`vswhere -latest -property installationPath`) do (
+    set "VSINSTALLDIR=%%i"
+)
+
+if "!VSINSTALLDIR!"=="" (
+    echo [ERROR] Visual Studio not found
+    exit /b 1
+)
+
+:: Set up environment
+set "VCVARS=!VSINSTALLDIR!\VC\Auxiliary\Build\vcvars64.bat"
+if exist "!VCVARS!" (
+    call "!VCVARS!"
+) else (
+    echo [ERROR] vcvars64.bat not found
+    exit /b 1
+)
+
+echo [INFO] Compiling AngelSmartMichael.cpp...
+
+:: Compile with all necessary includes and libraries
+cl /O2 /MT /DUNICODE /D_UNICODE /EHsc ^
+  /I "%ProgramFiles(x86)%\Windows Kits\10\Include\10.0.22621.0\shared" ^
+  /I "%ProgramFiles(x86)%\Windows Kits\10\Include\10.0.22621.0\um" ^
+  /I "%ProgramFiles(x86)%\Windows Kits\10\Include\10.0.22621.0\ucrt" ^
+  AngelSmartMichael.cpp ^
+  /link ^
+  shell32.lib ^
+  winhttp.lib ^
+  gdiplus.lib ^
+  ole32.lib ^
+  oleaut32.lib ^
+  comctl32.lib ^
+  user32.lib ^
+  kernel32.lib ^
+  advapi32.lib ^
+  /SUBSYSTEM:WINDOWS ^
+  /ENTRY:wWinMainCRTStartup ^
+  /OUT:PowerAngel_v8.exe
+
+if errorlevel 1 (
+    echo [ERROR] Compilation failed
+    exit /b 1
+)
+
+if exist PowerAngel_v8.exe (
+    echo [SUCCESS] Build completed successfully!
+    dir PowerAngel_v8.exe
+) else (
+    echo [ERROR] Executable not created
+    exit /b 1
+)
+
+endlocal
+'@
         
-        echo [INFO] Setting up MSVC environment...
+        # Save batch script
+        $batchContent | Out-File -FilePath "build.bat" -Encoding ASCII
         
-        :: Get the Visual Studio installation path
-        set "VSWHERE=C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe"
-        set "VSINSTALLDIR="
-        for /f "usebackq tokens=*" %%i in (`"!VSWHERE!" -latest -property installationPath`) do (
-          set "VSINSTALLDIR=%%i"
-        )
-        
-        if "!VSINSTALLDIR!"=="" (
-          echo [ERROR] Visual Studio not found
-          exit /b 1
-        )
-        
-        :: Set up environment variables
-        set "VCVARS=!VSINSTALLDIR!\VC\Auxiliary\Build\vcvars64.bat"
-        if exist "!VCVARS!" (
-          call "!VCVARS!"
-        ) else (
-          echo [ERROR] vcvars64.bat not found
-          exit /b 1
-        )
-        
-        :: Compile the code
-        echo [INFO] Compiling PowerAngel.cpp...
-        cl /O2 /MT /DUNICODE /D_UNICODE /EHsc ^
-          /I "C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\shared" ^
-          /I "C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um" ^
-          /I "C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\ucrt" ^
-          AngelSmartMichael.cpp ^
-          /link ^
-          shell32.lib ^
-          winhttp.lib ^
-          gdiplus.lib ^
-          ole32.lib ^
-          oleaut32.lib ^
-          comctl32.lib ^
-          user32.lib ^
-          kernel32.lib ^
-          advapi32.lib ^
-          /SUBSYSTEM:WINDOWS ^
-          /ENTRY:wWinMainCRTStartup ^
-          /OUT:PowerAngel_v8.exe
-        
-        if errorlevel 1 (
-          echo [ERROR] Compilation failed
-          exit /b 1
-        )
-        
-        if exist PowerAngel_v8.exe (
-          echo [SUCCESS] Build completed successfully!
-          echo File size: 
-          dir PowerAngel_v8.exe
-        ) else (
-          echo [ERROR] Executable not created
-          exit /b 1
-        )
-        
-        endlocal
+        # Run the batch script
+        cmd /c "build.bat"
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: PowerAngel-v8.0
         path: PowerAngel_v8.exe
-        retention-days: 7
