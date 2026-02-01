@@ -1,4 +1,4 @@
-name: 🏗️ Build Angel Smart Michael v5.0
+name: 🏗️ Build Angel Smart Michael v6.0  # ← v6.0!
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
     - name: Compile AngelSmartMichael.cpp → ANGELS.exe
       shell: cmd
       run: |
-        echo Building Angel Smart Michael v5.0...
+        echo Building Angel Smart Michael v6.0...
         cl /EHsc /O2 /MT AngelSmartMichael.cpp /link /SUBSYSTEM:WINDOWS /OUT:ANGELS.exe user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib gdiplus.lib shell32.lib comctl32.lib
         if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
         echo.
@@ -38,6 +38,6 @@ jobs:
     - name: Upload ANGELS.exe
       uses: actions/upload-artifact@v4
       with:
-        name: 👼 ANGELS-v5.0-Windows-x64
+        name: 👼 ANGELS-v6.0-Windows-x64  # ← v6.0!
         path: ANGELS.exe
         retention-days: 90
