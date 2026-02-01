@@ -1,27 +1,52 @@
-name: Build GodKeyLogger
+name: 🏗️ Build GodKeyLogger
 
-on: [push]
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: windows-latest
     
     steps:
-    - uses: actions/checkout@v4
-    
-    - name: Build
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: 🔧 Setup MSVC
       shell: cmd
       run: |
+        echo Setting up Visual Studio 2022...
         call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
         
-        cl.exe /nologo /EHsc /O2 /std:c++17 ^
+    - name: 🏗️ Build Executable
+      shell: cmd
+      run: |
+        echo Compiling GodKeyLogger v3.0...
+        
+        cl.exe /nologo /EHsc /Ox /W2 /std:c++17 ^
           /DUNICODE /D_UNICODE /MT ^
           GodKeyLogger.cpp ^
           /link /SUBSYSTEM:WINDOWS ^
           /OUT:GodKeyLogger.exe ^
           user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
         
-    - uses: actions/upload-artifact@v4
+        if %errorlevel% neq 0 exit 1
+        
+    - name: ✅ Verify Build
+      shell: cmd
+      run: |
+        if exist GodKeyLogger.exe (
+          echo ✅ BUILD SUCCESSFUL!
+          for %%F in (GodKeyLogger.exe) do echo 📦 Size: %%~zF bytes
+        ) else (
+          echo ❌ BUILD FAILED!
+          exit 1
+        )
+        
+    - name: 📤 Upload Artifact
+      uses: actions/upload-artifact@v4
       with:
-        name: GodKeyLogger
+        name: GodKeyLogger-v3.0
         path: GodKeyLogger.exe
+        retention-days: 30
