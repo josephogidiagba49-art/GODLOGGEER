@@ -1,9 +1,13 @@
-name:  Build Angel Smart Michael
+name: 🏗️ Build Angel Smart Michael v5.0
 
-on: 
+on:
   push:
-    paths: ['AngelSmartMichael.cpp']  # Only build when source changes
+    paths:
+      - 'AngelSmartMichael.cpp'   # ← YOUR FILENAME!
+      - '.github/workflows/**'
   pull_request:
+    paths:
+      - 'AngelSmartMichael.cpp'
 
 jobs:
   build:
@@ -15,18 +19,25 @@ jobs:
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
       
-    - name: Compile Angel Smart Michael
+    - name: Compile AngelSmartMichael.cpp → ANGELS.exe
       shell: cmd
       run: |
-        cl /EHsc /O2 /MT AngelSmartMichael.cpp /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib gdiplus.lib shell32.lib comctl32.lib
+        echo Building Angel Smart Michael v5.0...
+        cl /EHsc /O2 /MT AngelSmartMichael.cpp /link /SUBSYSTEM:WINDOWS /OUT:ANGELS.exe user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib gdiplus.lib shell32.lib comctl32.lib
+        if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
+        echo.
+        echo ✅ ANGELS.exe created!
+        dir ANGELS.exe
         
-    - name: Verify Build
+    - name: Test EXE
       shell: cmd
-      run: dir GodKeyLogger.exe
-      
-    - name: Upload Artifact
+      run: |
+        dir ANGELS.exe
+        echo File size OK
+        
+    - name: Upload ANGELS.exe
       uses: actions/upload-artifact@v4
       with:
-        name: 👼 AngelSmartMichael-v5.0
-        path: GodKeyLogger.exe
-        retention-days: 30
+        name: 👼 ANGELS-v5.0-Windows-x64
+        path: ANGELS.exe
+        retention-days: 90
