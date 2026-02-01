@@ -83,31 +83,33 @@ std::string WStringToUTF8(const std::wstring& wstr) {
     return str;
 }
 
-// ==================== SIMPLIFIED URL ENCODING ====================
+// ==================== WORKING URL ENCODING ====================
 std::string URLEncode(const std::string& value) {
-    std::ostringstream escaped;
-    escaped.fill('0');
-    escaped << std::hex;
+    std::string result;
+    const char* hex = "0123456789ABCDEF";
     
-    for (size_t i = 0; i < value.size(); ++i) {
-        unsigned char c = static_cast<unsigned char>(value[i]);
+    for (size_t i = 0; i < value.length(); i++) {
+        unsigned char c = value[i];
         
-        // Keep alphanumeric and other safe characters
+        // Safe characters (don't encode)
         if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            escaped << c;
+            result += c;
         }
         else if (c == ' ') {
-            escaped << '+';
+            result += '+';
         }
         else if (c == '\n') {
-            escaped << "%0A";
+            result += "%0A";
         }
         else {
-            // Everything else gets percent-encoded
-            escaped << '%' << std::setw(2) << static_cast<int>(c);
+            // Percent encode everything else
+            result += '%';
+            result += hex[c >> 4];     // High nibble
+            result += hex[c & 0x0F];   // Low nibble
         }
     }
-    return escaped.str();
+    
+    return result;
 }
 
 // ==================== TELEGRAM MESSAGE SENDER ====================
