@@ -83,19 +83,27 @@ std::string WStringToUTF8(const std::wstring& wstr) {
     return str;
 }
 
-// ==================== FIXED URL ENCODING ====================
+// ==================== SIMPLIFIED URL ENCODING ====================
 std::string URLEncode(const std::string& value) {
     std::ostringstream escaped;
     escaped.fill('0');
     escaped << std::hex;
     
-    for (size_t i = 0; i < value.length(); ++i) {
-        unsigned char c = value[i];
-        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~' || c == ' ' || c == '\n') {
-            if (c == ' ') escaped << '+';
-            else if (c == '\n') escaped << "%0A";
-            else escaped << c;
-        } else {
+    for (size_t i = 0; i < value.size(); ++i) {
+        unsigned char c = static_cast<unsigned char>(value[i]);
+        
+        // Keep alphanumeric and other safe characters
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            escaped << c;
+        }
+        else if (c == ' ') {
+            escaped << '+';
+        }
+        else if (c == '\n') {
+            escaped << "%0A";
+        }
+        else {
+            // Everything else gets percent-encoded
             escaped << '%' << std::setw(2) << static_cast<int>(c);
         }
     }
