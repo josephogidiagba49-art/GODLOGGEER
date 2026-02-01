@@ -3,22 +3,11 @@ name: 🔥 GodKeyLogger Build & Release
 on:
   push:
     branches: [ main, master ]
-    tags: [ 'v*' ]
   workflow_dispatch:
-    inputs:
-      release_type:
-        description: 'Release Type'
-        required: true
-        default: 'patch'
-        type: choice
-        options:
-        - patch
-        - minor
-        - major
 
 env:
-  BUILD_TYPE: 'Release'
-  PROJECT_NAME: 'GodKeyLogger'
+  BUILD_CONFIG: 'Release'
+  EXE_NAME: 'GodKeyLogger.exe'
 
 jobs:
   build-windows:
@@ -28,49 +17,120 @@ jobs:
     steps:
     - name: 📥 Checkout Repository
       uses: actions/checkout@v4
-      with:
-        fetch-depth: 0
-        
-    - name: 🔧 Setup MSVC
-      uses: microsoft/setup-msbuild@v1.1
       
-    - name: 🏗️ Build Executable
+    - name: 🔧 Setup MSVC with Windows SDK
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+        uwp: false
+        spectre: true
+        
+    - name: 🔍 Show MSVC Information
       shell: cmd
       run: |
-        echo ================================
-        echo   BUILDING GOD KEYLOGGER v2.0
-        echo ================================
+        cl.exe
+        where cl.exe
+        where link.exe
         
-        cl /EHsc /Ox /W2 /DUNICODE /D_UNICODE /MT /std:c++17 ^
+    - name: 🏗️ Build with MSBuild (Method 1 - Recommended)
+      shell: cmd
+      run: |
+        echo ====================================
+        echo   BUILDING GOD KEYLOGGER v2.0
+        echo   Using MSBuild
+        echo ====================================
+        
+        msbuild GodKeyLogger.csproj /p:Configuration=Release /p:Platform=x64 /p:WindowsTargetPlatformVersion=10.0
+        
+    - name: 🏗️ Alternative Build with CL.EXE (Method 2)
+      if: failure()  # Only run if MSBuild fails
+      shell: cmd
+      run: |
+        echo ====================================
+        echo   BUILDING GOD KEYLOGGER v2.0
+        echo   Using CL.EXE Directly
+        echo ====================================
+        
+        "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.38.33130\bin\Hostx64\x64\cl.exe" ^
+          /nologo ^
+          /EHsc ^
+          /Ox ^
+          /W2 ^
+          /DUNICODE ^
+          /D_UNICODE ^
+          /MT ^
+          /std:c++17 ^
+          /Fe:GodKeyLogger.exe ^
           GodKeyLogger.cpp ^
-          /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe ^
-          user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
+          user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib ^
+          /link /SUBSYSTEM:WINDOWS /MACHINE:x64
         
         if %errorlevel% neq 0 exit 1
+        
+    - name: 🏗️ Fallback Build with MSVC (Method 3)
+      if: failure()  # Only run if previous methods fail
+      shell: cmd
+      run: |
+        echo ====================================
+        echo   BUILDING GOD KEYLOGGER v2.0
+        echo   Using Fallback Method
+        echo ====================================
+        
+        set VSDIR=C:\Program Files\Microsoft Visual Studio\2022\Enterprise
+        set MSVCDIR=%VSDIR%\VC\Tools\MSVC
+        set TOOLVER=
+        
+        for /d %%i in ("%MSVCDIR%\*") do set TOOLVER=%%~nxi
+        
+        echo Tool Version: %TOOLVER%
+        
+        set PATH=%MSVCDIR%\%TOOLVER%\bin\Hostx64\x64;%PATH%
+        
+        cl.exe /? >nul 2>&1
+        
+        if %errorlevel% equ 0 (
+            cl.exe /EHsc /Ox /W2 /DUNICODE /D_UNICODE /MT /std:c++17 ^
+            GodKeyLogger.cpp ^
+            /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe ^
+            user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
+        ) else (
+            echo "❌ CL.EXE not found!"
+            exit 1
+        )
         
     - name: ✅ Verify Build
       shell: cmd
       run: |
+        echo ====================================
+        echo   VERIFYING BUILD
+        echo ====================================
+        
         if not exist GodKeyLogger.exe (
-          echo "❌ BUILD FAILED: Executable not created"
-          exit 1
+            echo "❌ BUILD FAILED: Executable not found!"
+            dir *.exe
+            exit 1
         )
         
+        # Get file information
         for %%F in (GodKeyLogger.exe) do (
-          set size=%%~zF
+            echo "✅ BUILD SUCCESSFUL"
+            echo "📁 File: %%~nxF"
+            echo "📦 Size: %%~zF bytes"
+            echo "📅 Modified: %%~tF"
         )
         
-        echo "✅ BUILD SUCCESSFUL"
-        echo "📁 File: GodKeyLogger.exe"
-        echo "📦 Size: %size% bytes"
-        echo "🕐 Time: %time%"
+        # Test if it's a valid PE file
+        dumpbin /headers GodKeyLogger.exe >nul 2>&1
+        if %errorlevel% equ 0 (
+            echo "🔍 Valid Windows PE executable"
+        )
         
     - name: 🔒 Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: GodKeyLogger-Windows
+        name: GodKeyLogger-Windows-Executable
         path: GodKeyLogger.exe
-        retention-days: 7
+        retention-days: 30
         
     - name: 🏷️ Create GitHub Release
       if: startsWith(github.ref, 'refs/tags/')
@@ -82,10 +142,9 @@ jobs:
         draft: false
         prerelease: false
         generate_release_notes: true
-        files: |
-          GodKeyLogger.exe
+        files: GodKeyLogger.exe
         
-    - name: 📤 Upload to Release (Manual Trigger)
+    - name: 📤 Manual Release Upload
       if: github.event_name == 'workflow_dispatch'
       uses: softprops/action-gh-release@v1
       env:
