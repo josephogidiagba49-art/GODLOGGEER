@@ -1,4 +1,4 @@
-name: 🏗️ Build GodKeyLogger
+name: Build GodKeyLogger
 on: [push]
 
 jobs:
@@ -6,37 +6,18 @@ jobs:
     runs-on: windows-latest
     
     steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-      
-    - name: 🔧 Setup MSBuild
-      uses: microsoft/setup-msbuild@v1.1
-      
-    - name: 🏗️ Compile
+    - uses: actions/checkout@v4
+    
+    # This action sets up everything correctly
+    - name: Setup Visual Studio
+      uses: ilammy/msvc-dev-cmd@v1
+    
+    - name: Build
       shell: cmd
       run: |
-        echo Building GodKeyLogger...
-        cl.exe /nologo /EHsc /O2 GodKeyLogger.cpp ^
-          /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe ^
-          user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
+        cl /EHsc /O2 GodKeyLogger.cpp /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
         
-        if %errorlevel% neq 0 exit 1
-        
-    - name: ✅ Verify Build
-      shell: cmd
-      run: |
-        if exist GodKeyLogger.exe (
-          echo ✅ BUILD SUCCESSFUL!
-          echo 📁 File: GodKeyLogger.exe
-          for %F in (GodKeyLogger.exe) do echo 📦 Size: %~zF bytes
-        ) else (
-          echo ❌ BUILD FAILED!
-          exit 1
-        )
-        
-    - name: 📤 Upload Artifact
-      uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v4
       with:
-        name: GodKeyLogger-Executable
+        name: GodKeyLogger
         path: GodKeyLogger.exe
-        retention-days: 30
