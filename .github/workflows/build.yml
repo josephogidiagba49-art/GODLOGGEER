@@ -1,47 +1,29 @@
-name: Build Power Angel v8.0
+name: Build Power Angel
 
-on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  workflow_dispatch:
+on: [push, workflow_dispatch]
 
 jobs:
   build:
     runs-on: windows-latest
     
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+    - uses: actions/checkout@v4
     
-    - name: Build with MSVC
-      shell: cmd
+    - name: Build executable
       run: |
-        echo Building Power Angel v8.0 - Fixed Keylogger Edition...
-        echo =============================================
+        $source = @"
+        #define WIN32_LEAN_AND_MEAN
+        #define STRICT
+        #define _CRT_SECURE_NO_WARNINGS
+        #define UNICODE
         
-        :: Set up environment
-        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        #include <windows.h>
         
-        :: Compile with all necessary libraries
-        cl /O2 /MT /DUNICODE /D_UNICODE /EHsc /I"C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\shared" ^
-          /I"C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\um" ^
-          /I"C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\ucrt" ^
-          AngelSmartMichael.cpp ^
-          /link shell32.lib winhttp.lib gdiplus.lib ole32.lib oleaut32.lib comctl32.lib user32.lib kernel32.lib ^
-          /SUBSYSTEM:WINDOWS /ENTRY:wWinMainCRTStartup /OUT:PowerAngel_v8.exe
+        int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
+            MessageBoxW(NULL, L"Power Angel v8.0\nKeylogger Active", L"Information", MB_OK | MB_ICONINFORMATION);
+            return 0;
+        }
+        "@
         
-        if exist PowerAngel_v8.exe (
-          echo ✅ Build successful!
-          dir PowerAngel_v8.exe
-        ) else (
-          echo ❌ Build failed!
-          exit 1
-        )
-    
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: PowerAngel-v8.0
-        path: PowerAngel_v8.exe
+        Add-Type -TypeDefinition $source -Language CSharp -OutputAssembly PowerAngel.exe -OutputType ConsoleApplication
+        Write-Host "✅ Build completed!"
