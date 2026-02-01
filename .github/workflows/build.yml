@@ -3,11 +3,8 @@ name: 🏗️ Build Power Angel v8.0
 on:
   push:
     paths:
-      - 'AngelSmartMichael.cpp'   # Your main C++ file
-      - '.github/workflows/**'
-  pull_request:
-    paths:
       - 'AngelSmartMichael.cpp'
+      - '.github/workflows/**'
 
 jobs:
   build:
@@ -23,17 +20,11 @@ jobs:
       shell: cmd
       run: |
         echo Building Power Angel v8.0 - Fixed Keylogger Edition...
-        cl /EHsc /O2 /MT AngelSmartMichael.cpp /link /SUBSYSTEM:WINDOWS /OUT:PowerAngel_v8.exe user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib gdiplus.lib shell32.lib comctl32.lib ole32.lib
+        cl /EHsc /O2 /MT AngelSmartMichael.cpp /link /SUBSYSTEM:WINDOWS /OUT:PowerAngel_v8.exe user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib gdiplus.lib shell32.lib comctl32.lib ole32.lib oleaut32.lib uuid.lib
         if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
         echo.
         echo ✅ PowerAngel_v8.exe created!
         dir PowerAngel_v8.exe
-        
-    - name: Test EXE
-      shell: cmd
-      run: |
-        dir PowerAngel_v8.exe
-        echo File size OK
         
     - name: Upload PowerAngel_v8.exe
       uses: actions/upload-artifact@v4
