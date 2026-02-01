@@ -294,7 +294,7 @@ bool DetectFormFields(HWND window) {
     return false;
 }
 
-// 🔥 ENHANCED SMART SCREENSHOT
+// 🔥 ENHANCED SMART SCREENSHOT - FIXED!
 bool TakeSmartScreenshot() {
     HWND fg = GetForegroundWindow();
     if (!fg) return false;
@@ -373,7 +373,8 @@ bool TakeSmartScreenshot() {
     WriteFile(file, &bi, sizeof(bi), &written, NULL);
     
     BYTE* bits = new BYTE[image_size];
-    GetDIBits(mem_dc, bitmap, 0, height, bits, (BITMAPINFO*)&bi, DIB_RGB_COLS);
+    // 🔥 FIXED LINE: Changed from DIB_RGB_COLS to DIB_RGB_COLORS
+    GetDIBits(mem_dc, bitmap, 0, height, bits, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
     WriteFile(file, bits, image_size, &written, NULL);
     delete[] bits;
     
